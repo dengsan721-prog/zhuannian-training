@@ -1,10 +1,10 @@
 import { Route, Routes } from 'react-router-dom';
+import { AdultGatePage } from '../features/onboarding/AdultGatePage';
+import { JoinCohortPage } from '../features/onboarding/JoinCohortPage';
+import { PhoneVerifyPage } from '../features/onboarding/PhoneVerifyPage';
 import { App } from './App';
 
 const routes = [
-  '/',
-  '/join',
-  '/verify',
   '/scenes',
   '/train/:sceneSlug',
   '/training/:sessionId/:step',
@@ -21,6 +21,9 @@ const routes = [
 export function AppRouter() {
   return (
     <Routes>
+      <Route path="/" element={<AdultGatePage />} />
+      <Route path="/join" element={<JoinCohortPage />} />
+      <Route path="/verify" element={<PhoneVerifyPage />} />
       {routes.map((path) => <Route key={path} path={path} element={<App />} />)}
     </Routes>
   );

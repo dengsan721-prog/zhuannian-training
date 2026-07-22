@@ -6,6 +6,16 @@ button, [role="button"], input[type="radio"], input[type="checkbox"] { min-width
 :focus-visible { outline: 3px solid var(--color-accent); outline-offset: 3px; }
 .app-shell { width: min(100%, 480px); margin-inline: auto; padding: var(--space-3); }
 .surface { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: var(--space-4); overflow-wrap: anywhere; }
+.onboarding-stack { display: grid; gap: var(--space-3); }
+.onboarding-stack h1, .onboarding-stack p { margin-block: 0; }
+.onboarding-stack label:not(.consent-row) { display: grid; gap: var(--space-1); }
+.onboarding-stack input:not([type="checkbox"]) { width: 100%; border: 1px solid var(--color-border); border-radius: 10px; padding-inline: var(--space-3); }
+.consent-row { display: grid; grid-template-columns: var(--touch-target) 1fr; align-items: center; gap: var(--space-2); }
+.eyebrow { color: var(--color-accent); font-weight: 600; }
+.boundary-note, .error-note { color: var(--color-danger); }
+.service-disclosure { display: grid; gap: var(--space-2); color: var(--color-muted); font-size: 0.925rem; }
+.primary-action { display: inline-grid; min-height: var(--touch-target); place-items: center; border: 0; border-radius: 10px; padding: var(--space-2) var(--space-4); color: #fff; background: var(--color-accent); font-weight: 600; text-align: center; text-decoration: none; }
+.primary-action:disabled { cursor: not-allowed; opacity: 0.5; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

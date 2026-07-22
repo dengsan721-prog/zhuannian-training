@@ -68,3 +68,50 @@ The implementation keeps the contract limited to the requested fixed content mod
 ## Remaining concern
 
 The initial RED is an import-resolution failure because the validator entry point intentionally did not exist yet; it is the expected absence of the contract rather than an assertion-level failure. All six behavioral assertions ran after the entry point was implemented.
+
+## Independent review-fix pass
+
+The authoritative Task 2 plan was updated after the initial implementation. Review showed that `045a2e0` did not yet enforce structured, uncertainty-worded strength possibilities; uncertainty language for benevolent and constraint hypotheses; hypothesis id/text uniqueness; or complete safety-route requirements. Its stop-only test also bundled ordinary fields rather than proving each field independently.
+
+### Review-fix RED
+
+Command:
+
+```powershell
+npm test -- src/domain/scenes/validateScene.test.ts
+```
+
+Result: `1 failed` test file; `10 failed | 16 passed` tests. Failures directly reproduced duplicate hypothesis ids/texts, definite strength and hypothesis wording, empty safety-route heading/body, missing `exit`, missing `trusted-support`, and duplicate safety actions.
+
+### Review-fix GREEN and full verification
+
+Focused command:
+
+```powershell
+npm test -- src/domain/scenes/validateScene.test.ts
+```
+
+Result: `1 passed` test file; `26 passed` tests. This includes ten independently parameterized forbidden stop-scene fields, an accepted safety-only baseline, both positive hypothesis kinds, both duplicate-hypothesis modes, and all safety-route failure modes.
+
+Full command:
+
+```powershell
+npm run check
+```
+
+Result: exit 0. ESLint and TypeScript passed; Vitest reported `2 passed` files and `27 passed` tests; the production build completed successfully.
+
+The Task 1 UTF-8/mojibake patterns (`杞康璁粌`, `浠呴潰鍚戞垚骞翠汉`, `骞哥椹跨珯`, and U+FFFD) produced no matches under `src`. `git diff --check` also passed.
+
+### Review-fix implementation
+
+- Added `StrengthPossibility` and made each strength item carry an id, uncertain possibility, and evidence prompt.
+- Enforced uncertainty language on benevolent and constraint hypotheses while preserving direct boundary hypotheses.
+- Enforced trimmed-text/id uniqueness for ordinary-scene hypotheses.
+- Required non-empty safety text, unique actions, and both `exit` and `trusted-support`.
+- Statically bound `sceneSchema` to `SceneVersion` and removed the validator return cast.
+- Preserved the six unique evidence checks and scene-code/relationship rules with regression tests.
+
+Implementation commit: `ad343c7edc7d1359bff2857dfbbaa9bf81777953` (`fix: harden governed scene contract`).
+
+No Task 3 files or behavior were introduced.

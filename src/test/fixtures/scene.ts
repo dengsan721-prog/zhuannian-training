@@ -32,7 +32,18 @@ export const validScene: SceneVersion = {
     { id: 'next-need', prompt: '我需要先稳定、确认、解决、设界限还是求助？' },
   ],
   controllabilityQuestion: '下一步我能控制的是表达、规则、暂缓还是求助中的哪一项？',
-  strengthLens: ['自主意识', '专注兴趣', '争取个人空间'],
+  strengthLens: [
+    {
+      id: 'autonomy-signal',
+      possibility: '这也许体现了正在发展的自主意识。',
+      evidencePrompt: '他是否也能在其他情境中表达并承担选择？',
+    },
+    {
+      id: 'focus-signal',
+      possibility: '这种投入或许提示他具备持续专注的种子。',
+      evidencePrompt: '这种专注是否也会出现在学习、运动或创作中？',
+    },
+  ],
   boundary: '理解自主需要不等于允许无限使用，也不取消共同确认的规则。',
   newExpression: '我看见你还没准备停下来。我们先确认时间和约定，再一起决定怎样收尾。',
   microAction: '给出一次明确提醒，让孩子从两个可接受的结束方式中选择。',

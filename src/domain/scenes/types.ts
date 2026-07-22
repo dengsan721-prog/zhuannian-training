@@ -24,6 +24,12 @@ export interface Hypothesis {
   evidencePrompt: string;
 }
 
+export interface StrengthPossibility {
+  id: string;
+  possibility: string;
+  evidencePrompt: string;
+}
+
 export interface SafetyRoute {
   heading: string;
   body: string;
@@ -47,7 +53,7 @@ export interface SceneVersion {
   hypotheses: Hypothesis[];
   evidenceChecks: Array<{ id: EvidenceCheckId; prompt: string }>;
   controllabilityQuestion: string | null;
-  strengthLens?: string[];
+  strengthLens?: StrengthPossibility[];
   boundary: string | null;
   newExpression: string | null;
   microAction: string | null;

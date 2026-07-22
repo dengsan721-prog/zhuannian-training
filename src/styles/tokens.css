@@ -1,0 +1,15 @@
+:root {
+  --color-bg: #f7f6f2;
+  --color-surface: #ffffff;
+  --color-text: #1c1c1e;
+  --color-muted: #5f6368;
+  --color-border: #deddd8;
+  --color-accent: #2f6f63;
+  --color-danger: #a33a32;
+  --radius: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --touch-target: 44px;
+}

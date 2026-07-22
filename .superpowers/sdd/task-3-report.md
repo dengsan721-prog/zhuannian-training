@@ -73,3 +73,18 @@ npm run build
 ## Cleanup and self-review
 
 Removed the locally generated `.supabase/telemetry.json` and did not stage it. The implementation change set is limited to the Task 3 files above. Implementation commit: `8332cece1b840fd4813114f2b9662ab97c387e87` (`feat: add versioned training data schema`).
+
+## Independent review-fix pass
+
+Independent review found two Task 3 compliance gaps: the generated Supabase config still allowed public sign-up at the global Auth and email entry points, and eight RLS assertion descriptions did not exactly match the authoritative underscore-form table names.
+
+Focused RED checks failed on both enabled sign-up switches and all eight non-exact descriptions. The fix changed the Auth and email `enable_signup` values to `false` and restored the exact descriptions for `cohort_invites`, `cohort_memberships`, `scene_versions`, `training_sessions`, `training_completions`, `follow_up_reviews`, `saved_insights`, and `user_badges`.
+
+Fresh post-fix verification:
+
+- focused invite-only and exact-description assertions: exit 0;
+- `npm run test:db`: 34/34 pgTAP assertions passed;
+- `npm run check`: ESLint, TypeScript, 27/27 Vitest tests, and the production build passed;
+- UTF-8/mojibake scan, `git diff --check d3d1cf4..HEAD`, and `git status --short`: clean.
+
+Review-fix commit: `969e6b1a17a604932db973a8b55016a37592cd22` (`fix: enforce invite-only supabase config`).

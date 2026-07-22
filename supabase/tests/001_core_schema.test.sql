@@ -36,15 +36,15 @@ select fk_ok('public','training_completions',array['scene_version_id'],'public',
 
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass), 'profiles uses RLS');
 select ok((select relrowsecurity from pg_class where oid = 'public.cohorts'::regclass), 'cohorts uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.cohort_invites'::regclass), 'cohort invites uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.cohort_memberships'::regclass), 'cohort memberships uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.cohort_invites'::regclass), 'cohort_invites uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.cohort_memberships'::regclass), 'cohort_memberships uses RLS');
 select ok((select relrowsecurity from pg_class where oid = 'public.scenes'::regclass), 'scenes uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.scene_versions'::regclass), 'scene versions uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.training_sessions'::regclass), 'training sessions uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.training_completions'::regclass), 'training completions uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.follow_up_reviews'::regclass), 'follow-up reviews uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.saved_insights'::regclass), 'saved insights uses RLS');
-select ok((select relrowsecurity from pg_class where oid = 'public.user_badges'::regclass), 'user badges uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.scene_versions'::regclass), 'scene_versions uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.training_sessions'::regclass), 'training_sessions uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.training_completions'::regclass), 'training_completions uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.follow_up_reviews'::regclass), 'follow_up_reviews uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.saved_insights'::regclass), 'saved_insights uses RLS');
+select ok((select relrowsecurity from pg_class where oid = 'public.user_badges'::regclass), 'user_badges uses RLS');
 
 select * from finish();
 rollback;

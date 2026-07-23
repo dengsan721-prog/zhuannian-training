@@ -184,7 +184,11 @@ reset role;
 
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000003', true);
 set local role authenticated;
-select results_eq('select count(*) from public.training_completions', 'values (1::bigint)', 'assigned coach reads completion status');
+select results_eq(
+  'select count(*) from public.training_completions',
+  'values (0::bigint)',
+  'assigned coach cannot read a legacy completion without a pinned cohort'
+);
 reset role;
 
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000004', true);

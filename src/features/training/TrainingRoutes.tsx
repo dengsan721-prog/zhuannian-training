@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import type { CompletionResult } from '../../domain/progress/types';
 import { createTrainingDraft } from '../../domain/training/trainingReducer';
 import { ordinaryTrainingSteps } from '../../domain/training/types';
+import type { ProgressRepository } from '../../lib/repositories/ProgressRepository';
 import type { SceneRepository } from '../../lib/repositories/SceneRepository';
+import { SupabaseProgressRepository } from '../../lib/repositories/SupabaseProgressRepository';
 import { SupabaseSceneRepository } from '../../lib/repositories/SupabaseSceneRepository';
 import { SupabaseTrainingRuntimeRepository } from '../../lib/repositories/SupabaseTrainingRuntimeRepository';
 import type { TrainingRuntimeRepository } from '../../lib/repositories/TrainingRuntimeRepository';
 import { getSupabaseClient } from '../../lib/supabase/client';
+import { CompletionPage } from '../progress/CompletionPage';
+import { pendingCompletionStore } from '../progress/pendingCompletionStore';
 import { SafetyStopPage } from './SafetyStopPage';
 import { TrainingPage } from './TrainingPage';
 import {
@@ -36,6 +41,7 @@ const startRequestKey = (
 export type TrainingRouteDependencies = {
   sceneRepository?: SceneRepository;
   runtimeRepository?: TrainingRuntimeRepository;
+  progressRepository?: ProgressRepository;
   getCurrentUserId?: () => Promise<string>;
   now?: () => Date;
   online?: boolean;
@@ -58,6 +64,20 @@ function resolveRuntimeRepository(
   repository?: TrainingRuntimeRepository,
 ): TrainingRuntimeRepository {
   return repository ?? new SupabaseTrainingRuntimeRepository(getSupabaseClient());
+}
+
+function resolveProgressRepository(
+  repository?: ProgressRepository,
+): ProgressRepository {
+  return repository ?? new SupabaseProgressRepository(getSupabaseClient());
+}
+
+function readErrorMessage(error: unknown): string {
+  if (typeof error !== 'object' || error === null || Array.isArray(error)) {
+    return '';
+  }
+  const message = (error as Record<string, unknown>).message;
+  return typeof message === 'string' ? message : '';
 }
 
 function RouteMessage({
@@ -339,6 +359,7 @@ export function TrainingStartRoute({
 export function TrainingSessionRoute({
   sceneRepository,
   runtimeRepository,
+  progressRepository,
   getCurrentUserId = defaultCurrentUserId,
   now = systemNow,
   online,
@@ -351,7 +372,10 @@ export function TrainingSessionRoute({
     | { status: 'invalid-link' }
     | { status: 'missing-context' }
     | { status: 'network-error' }
+    | { status: 'pending-completion-error' }
+    | { status: 'completion-rejected' }
     | { status: 'content-update' }
+    | { status: 'completion'; result: CompletionResult }
     | {
         status: 'ready';
         draft: ReturnType<typeof createTrainingDraft>;
@@ -379,6 +403,61 @@ export function TrainingSessionRoute({
       if (!active) return;
       if (!uuidPattern.test(userId)) {
         setState({ status: 'missing-context' });
+        return;
+      }
+
+      const pendingCompletion = pendingCompletionStore.load(userId, sessionId);
+      if (pendingCompletion) {
+        try {
+          const result = await resolveProgressRepository(progressRepository)
+            .complete(pendingCompletion);
+          if (!active) return;
+          pendingCompletionStore.remove(userId, sessionId);
+          trainingDraftStore.remove(userId, sessionId);
+          setState({ status: 'completion', result });
+        } catch (caught) {
+          if (!active) return;
+          const message = readErrorMessage(caught);
+          if (message === 'session_not_completable') {
+            try {
+              const route = await resolveRuntimeRepository(runtimeRepository)
+                .checkTrainingSession(sessionId);
+              if (!active) return;
+              if (route === 'safety-stop') {
+                pendingCompletionStore.remove(userId, sessionId);
+                trainingDraftStore.remove(userId, sessionId);
+                saveSafetyContext(sessionId, {
+                  sceneVersionId: pendingCompletion.sceneVersionId,
+                  source: 'server',
+                });
+                navigate(`/training/${sessionId}/safety-stop`, {
+                  replace: true,
+                });
+              } else if (route === 'content-update') {
+                pendingCompletionStore.remove(userId, sessionId);
+                trainingDraftStore.remove(userId, sessionId);
+                setState({ status: 'content-update' });
+              } else if (route === 'continue') {
+                pendingCompletionStore.remove(userId, sessionId);
+                setState({ status: 'completion-rejected' });
+              } else {
+                setState({ status: 'pending-completion-error' });
+              }
+            } catch {
+              if (active) setState({ status: 'pending-completion-error' });
+            }
+          } else if (message === 'cohort_context_ambiguous'
+            || message === 'database_integrity_failure'
+            || message === 'idempotency_conflict'
+            || message === 'invalid_progress_request'
+            || message === 'session_not_found'
+            || message === 'unauthenticated') {
+            pendingCompletionStore.remove(userId, sessionId);
+            setState({ status: 'completion-rejected' });
+          } else {
+            setState({ status: 'pending-completion-error' });
+          }
+        }
         return;
       }
 
@@ -448,6 +527,7 @@ export function TrainingSessionRoute({
     getCurrentUserId,
     navigate,
     now,
+    progressRepository,
     runtimeRepository,
     sceneRepository,
     sessionId,
@@ -459,10 +539,20 @@ export function TrainingSessionRoute({
       <TrainingPage
         initialDraft={state.draft}
         runtimeRepository={resolveRuntimeRepository(runtimeRepository)}
+        progressRepository={resolveProgressRepository(progressRepository)}
         online={online}
         now={now}
         recoveryNotice={state.recoveryNotice}
       />
+    );
+  }
+  if (state.status === 'completion') {
+    return (
+      <main className="app-shell">
+        <section className="surface training-shell">
+          <CompletionPage result={state.result} />
+        </section>
+      </main>
     );
   }
   if (state.status === 'loading') {
@@ -490,6 +580,29 @@ export function TrainingSessionRoute({
       <RouteMessage
         heading="本场景内容已更新"
         message="为避免混用不同版本，这次练习已停止。"
+      />
+    );
+  }
+  if (state.status === 'pending-completion-error') {
+    return (
+      <RouteMessage
+        heading="完成记录尚未确认"
+        message="完成记录尚未确认；重试会继续使用同一个记录编号，不会恢复或补写刚才的选择。"
+        action={{
+          label: '重试记录',
+          run: () => {
+            setState({ status: 'loading' });
+            setAttempt((value) => value + 1);
+          },
+        }}
+      />
+    );
+  }
+  if (state.status === 'completion-rejected') {
+    return (
+      <RouteMessage
+        heading="完成记录未通过核对"
+        message="本页不会显示完成或奖励，请返回场景页重新开始。"
       />
     );
   }

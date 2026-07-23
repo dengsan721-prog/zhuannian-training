@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppRouter } from '../../app/router';
 import type { PublishedSceneVersion } from '../../domain/scenes/types';
 import { trainingReducer } from '../../domain/training/trainingReducer';
+import type { CompletionCommand } from '../../domain/training/types';
+import type { ProgressRepository } from '../../lib/repositories/ProgressRepository';
 import type { SceneRepository } from '../../lib/repositories/SceneRepository';
 import type {
   TrainingRuntimeRepository,
@@ -17,6 +19,7 @@ import type {
 } from '../../lib/repositories/TrainingRuntimeRepository';
 import { validPublishedScene } from '../../test/fixtures/scene';
 import { actionTimes, baseTrainingDraft } from '../../test/fixtures/training';
+import { pendingCompletionStore } from '../progress/pendingCompletionStore';
 import { saveSafetyContext, trainingDraftStore } from './trainingDraftStore';
 
 const userId = baseTrainingDraft().userId;
@@ -63,9 +66,36 @@ function runtimeRepository(
   };
 }
 
+function progressRepository(
+  overrides: Partial<ProgressRepository> = {},
+): ProgressRepository {
+  return {
+    complete: vi.fn(async () => ({
+      completionId: '55555555-5555-4555-8555-555555555555',
+      awarded: false as const,
+      pointsDelta: 0 as const,
+    })),
+    saveReview: vi.fn(),
+    setSaved: vi.fn(),
+    listSaved: vi.fn(async () => []),
+    getPendingReview: vi.fn(async () => null),
+    getPrivateProgress: vi.fn(async () => ({
+      points: 0,
+      completedScenes: 0,
+      reviewsCompleted: 0,
+      thisWeekCompletions: 0,
+      badges: [],
+      unlockedSurprises: [],
+      classAggregate: null,
+    })),
+    ...overrides,
+  };
+}
+
 type Dependencies = {
   sceneRepository?: SceneRepository;
   runtimeRepository?: TrainingRuntimeRepository;
+  progressRepository?: ProgressRepository;
   getCurrentUserId?: () => Promise<string>;
 };
 
@@ -87,6 +117,7 @@ function renderRoute(
       <AppRouter
         sceneRepository={dependencies.sceneRepository}
         runtimeRepository={dependencies.runtimeRepository}
+        progressRepository={dependencies.progressRepository ?? progressRepository()}
         getCurrentUserId={dependencies.getCurrentUserId ?? (async () => userId)}
         trainingNow={options.injectNow === false ? undefined : () => fixedNow}
         trainingOnline
@@ -526,6 +557,120 @@ describe('training routes', () => {
     });
     expect(getPublishedById).toHaveBeenCalledWith(draft.scene.id);
     expect(getBySlug).not.toHaveBeenCalled();
+  });
+
+  it('retries a pending completion before a completed-session content update and shows only generic success', async () => {
+    const draft = baseTrainingDraft();
+    const command: CompletionCommand = {
+      eventId: draft.completionEventId,
+      sessionId: draft.sessionId,
+      sceneId: draft.scene.sceneId,
+      sceneVersionId: draft.scene.id,
+      completedAt: actionTimes.completion,
+    };
+    trainingDraftStore.save(draft);
+    expect(pendingCompletionStore.save(userId, command)).toBe(true);
+    trainingDraftStore.removeAllFromMemory();
+    const complete = vi.fn(async () => ({
+      completionId: '55555555-5555-4555-8555-555555555555',
+      awarded: false as const,
+      pointsDelta: 0 as const,
+    }));
+    const checkTrainingSession = vi.fn(
+      async (): Promise<TrainingRuntimeRoute> => 'content-update',
+    );
+
+    renderRoute(`/training/${sessionId}/expression-action`, {
+      sceneRepository: sceneRepository(),
+      runtimeRepository: runtimeRepository({ checkTrainingSession }),
+      progressRepository: progressRepository({ complete }),
+    });
+
+    expect(await screen.findByRole('heading', { name: '完成已记录' }))
+      .toBeInTheDocument();
+    expect(complete).toHaveBeenCalledWith(command);
+    expect(checkTrainingSession).not.toHaveBeenCalled();
+    expect(screen.queryByText('转念一刻')).not.toBeInTheDocument();
+    expect(screen.queryByText(/训练完成|获得\s*10|第一念/)).not.toBeInTheDocument();
+    expect(pendingCompletionStore.load(userId, sessionId)).toBeNull();
+    expect(sessionStorage.getItem(
+      `turning-mind:draft:${userId}:${sessionId}`,
+    )).toBeNull();
+  });
+
+  it('keeps a hard-refresh pending completion on an unknown response and retries unchanged', async () => {
+    const user = userEvent.setup();
+    const draft = baseTrainingDraft();
+    const command: CompletionCommand = {
+      eventId: draft.completionEventId,
+      sessionId: draft.sessionId,
+      sceneId: draft.scene.sceneId,
+      sceneVersionId: draft.scene.id,
+      completedAt: actionTimes.completion,
+    };
+    trainingDraftStore.save(draft);
+    pendingCompletionStore.save(userId, command);
+    trainingDraftStore.removeAllFromMemory();
+    const complete = vi.fn()
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValueOnce({
+        completionId: '55555555-5555-4555-8555-555555555555',
+        awarded: false,
+        pointsDelta: 0,
+      });
+    const checkTrainingSession = vi.fn();
+
+    renderRoute(`/training/${sessionId}/expression-action`, {
+      sceneRepository: sceneRepository(),
+      runtimeRepository: runtimeRepository({ checkTrainingSession }),
+      progressRepository: progressRepository({ complete }),
+    });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '完成记录尚未确认',
+    );
+    expect(screen.queryByText(/训练完成|完成已记录|转念一刻/))
+      .not.toBeInTheDocument();
+    expect(pendingCompletionStore.load(userId, sessionId)).toEqual(command);
+    expect(checkTrainingSession).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: '重试记录' }));
+    expect(await screen.findByRole('heading', { name: '完成已记录' }))
+      .toBeInTheDocument();
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[1]).toEqual(complete.mock.calls[0]);
+  });
+
+  it('does not retry or celebrate a deterministic pending-completion cohort conflict', async () => {
+    const draft = baseTrainingDraft();
+    const command: CompletionCommand = {
+      eventId: draft.completionEventId,
+      sessionId: draft.sessionId,
+      sceneId: draft.scene.sceneId,
+      sceneVersionId: draft.scene.id,
+      completedAt: actionTimes.completion,
+    };
+    pendingCompletionStore.save(userId, command);
+    const complete = vi.fn(async () => {
+      throw new Error('cohort_context_ambiguous');
+    });
+    const checkTrainingSession = vi.fn();
+
+    renderRoute(`/training/${sessionId}/expression-action`, {
+      sceneRepository: sceneRepository(),
+      runtimeRepository: runtimeRepository({ checkTrainingSession }),
+      progressRepository: progressRepository({ complete }),
+    });
+
+    expect(await screen.findByRole('heading', {
+      name: '完成记录未通过核对',
+    })).toBeInTheDocument();
+    expect(screen.queryByText(/训练完成|完成已记录|获得\s*10|转念一刻/))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试记录' }))
+      .not.toBeInTheDocument();
+    expect(checkTrainingSession).not.toHaveBeenCalled();
+    expect(pendingCompletionStore.load(userId, sessionId)).toBeNull();
   });
 
   it('canonicalizes stale and forged step URLs from valid reducer state', async () => {

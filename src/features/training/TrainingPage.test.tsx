@@ -1,4 +1,11 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   MemoryRouter,
@@ -14,6 +21,7 @@ import type {
   TrainingDraft,
   TrainingStep,
 } from '../../domain/training/types';
+import type { ProgressRepository } from '../../lib/repositories/ProgressRepository';
 import type { TrainingRuntimeRepository } from '../../lib/repositories/TrainingRuntimeRepository';
 import {
   actionTimes,
@@ -21,6 +29,7 @@ import {
   reduceTraining,
   validEvidence,
 } from '../../test/fixtures/training';
+import { pendingCompletionStore } from '../progress/pendingCompletionStore';
 import { trainingDraftStore } from './trainingDraftStore';
 import { TrainingPage } from './TrainingPage';
 
@@ -46,14 +55,31 @@ const runtimeWith = (
   checkTrainingSession: vi.fn(async () => route),
 });
 
+const progressWith = (
+  complete: ProgressRepository['complete'] = vi.fn(async () => ({
+    completionId: '55555555-5555-4555-8555-555555555555',
+    awarded: true as const,
+    pointsDelta: 10 as const,
+  })),
+): ProgressRepository => ({
+  complete,
+  saveReview: vi.fn(),
+  setSaved: vi.fn(),
+  listSaved: vi.fn(async () => []),
+  getPendingReview: vi.fn(async () => null),
+  getPrivateProgress: vi.fn(),
+});
+
 function renderTraining(
   draft: TrainingDraft,
   options: {
     runtime?: TrainingRuntimeRepository;
+    progress?: ProgressRepository;
     online?: boolean;
   } = {},
 ) {
   const runtime = options.runtime ?? runtimeWith();
+  const progress = options.progress ?? progressWith();
   render(
     <MemoryRouter initialEntries={[
       `/training/${draft.sessionId}/${draft.step}`,
@@ -61,6 +87,7 @@ function renderTraining(
       <TrainingPage
         initialDraft={draft}
         runtimeRepository={runtime}
+        progressRepository={progress}
         online={options.online ?? true}
         now={() => now}
       />
@@ -68,6 +95,42 @@ function renderTraining(
     </MemoryRouter>,
   );
   return runtime;
+}
+
+function renderRoutedTraining(
+  draft: TrainingDraft,
+  runtime: TrainingRuntimeRepository,
+  progress: ProgressRepository,
+) {
+  render(
+    <MemoryRouter initialEntries={[
+      '/outside',
+      `/training/${draft.sessionId}/${draft.step}`,
+    ]} initialIndex={1}>
+      <Routes>
+        <Route
+          path="/training/:sessionId/:step"
+          element={(
+            <TrainingPage
+              initialDraft={draft}
+              runtimeRepository={runtime}
+              progressRepository={progress}
+              online
+              now={() => now}
+            />
+          )}
+        />
+        <Route path="/scenes" element={<h1>场景页</h1>} />
+        <Route path="/outside" element={<h1>外部页</h1>} />
+        <Route
+          path="/training/:sessionId/safety-stop"
+          element={<h1>安全支持页</h1>}
+        />
+      </Routes>
+      <BackButton />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
 }
 
 async function chooseFirstThought(
@@ -103,6 +166,32 @@ async function chooseEvidence(
   await user.click(screen.getByRole('button', { name: '继续' }));
 }
 
+function expressionDraft(): TrainingDraft {
+  return reduceTraining(baseTrainingDraft(), [
+    { type: 'confirm-safe-facts', at: actionTimes.facts },
+    {
+      type: 'choose-first-thought',
+      value: { kind: 'option', optionId: 'disrespect' },
+      at: actionTimes.thought,
+    },
+    {
+      type: 'choose-prediction',
+      response: '争辩或反抗',
+      at: actionTimes.prediction,
+    },
+    {
+      type: 'choose-hypotheses',
+      hypothesisIds: ['rule-boundary', 'need-autonomy'],
+      at: actionTimes.hypotheses,
+    },
+    {
+      type: 'confirm-evidence',
+      value: validEvidence,
+      at: actionTimes.evidence,
+    },
+  ]);
+}
+
 async function tabTo(
   user: ReturnType<typeof userEvent.setup>,
   target: HTMLElement,
@@ -126,7 +215,14 @@ describe('TrainingPage', () => {
 
   it('drives the real six-screen reducer journey and replaces screen six with feedback', async () => {
     const user = userEvent.setup();
-    const runtime = renderTraining(baseTrainingDraft());
+    const complete = vi.fn(async () => ({
+      completionId: '55555555-5555-4555-8555-555555555555',
+      awarded: true as const,
+      pointsDelta: 10 as const,
+    }));
+    const runtime = renderTraining(baseTrainingDraft(), {
+      progress: progressWith(complete),
+    });
 
     const firstProgress = screen.getByText('第 1 步，共 6 步');
     expect(firstProgress).toHaveAttribute('aria-live', 'polite');
@@ -176,8 +272,361 @@ describe('TrainingPage', () => {
     expect(screen.getByText('理解自主需要不等于允许无限使用，也不取消共同确认的规则。')).toBeInTheDocument();
     expect(screen.queryByText('第 7 步')).not.toBeInTheDocument();
     expect(runtime.checkTrainingSession).toHaveBeenCalledTimes(7);
+    expect(complete).toHaveBeenCalledWith({
+      eventId: baseTrainingDraft().completionEventId,
+      sessionId: baseTrainingDraft().sessionId,
+      sceneId: baseTrainingDraft().scene.sceneId,
+      sceneVersionId: baseTrainingDraft().scene.id,
+      completedAt: now.toISOString(),
+    });
+    expect(screen.getByText('训练完成，获得 10 点转念力'))
+      .toHaveAttribute('role', 'status');
     expect(trainingDraftStore.load(baseTrainingDraft().userId, baseTrainingDraft().sessionId))
       .toBeNull();
+  });
+
+  it('hides all success feedback until completion is confirmed and retries the same command', async () => {
+    const user = userEvent.setup();
+    let rejectFirst!: (reason: Error) => void;
+    const first = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const complete = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce({
+        completionId: '55555555-5555-4555-8555-555555555555',
+        awarded: false,
+        pointsDelta: 0,
+      });
+    const draft = expressionDraft();
+    renderTraining(draft, { progress: progressWith(complete) });
+
+    const completeButton = await screen.findByRole('button', {
+      name: '完成这次练习',
+    });
+    await waitFor(() => expect(completeButton).toBeEnabled());
+    await user.click(completeButton);
+
+    expect(screen.queryByRole('heading', { name: '转念一刻' }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText(/训练完成|获得\s*10/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '把转念落到一个可控动作' }))
+      .toBeInTheDocument();
+
+    rejectFirst(new Error('response lost'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('完成记录尚未确认');
+    expect(screen.queryByRole('heading', { name: '转念一刻' }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText(/训练完成|获得\s*10/)).not.toBeInTheDocument();
+
+    const raw = sessionStorage.getItem(
+      `turning-mind:pending-completion:v1:${draft.userId}:${draft.sessionId}`,
+    );
+    expect(JSON.parse(raw!)).toEqual({
+      userId: draft.userId,
+      eventId: draft.completionEventId,
+      sessionId: draft.sessionId,
+      sceneId: draft.scene.sceneId,
+      sceneVersionId: draft.scene.id,
+      completedAt: now.toISOString(),
+    });
+    expect(raw).not.toContain('firstThought');
+    expect(raw).not.toContain('hypotheses');
+    expect(screen.getByRole('button', { name: '完成这次练习' }))
+      .toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '重试记录' }));
+    expect(await screen.findByRole('heading', { name: '转念一刻' }))
+      .toBeInTheDocument();
+    expect(screen.getByText('完成已记录')).toHaveAttribute('role', 'status');
+    expect(screen.queryByText(/训练完成|获得\s*10/)).not.toBeInTheDocument();
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[1]).toEqual(complete.mock.calls[0]);
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
+    expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)).toBeNull();
+  });
+
+  it('lets danger take over an in-flight completion and permanently clears its retry command', async () => {
+    const user = userEvent.setup();
+    let rejectCompletion!: (reason: Error) => void;
+    const complete = vi.fn(() => new Promise<never>((_resolve, reject) => {
+      rejectCompletion = reject;
+    }));
+    const draft = expressionDraft();
+    renderTraining(draft, { progress: progressWith(complete) });
+
+    const button = await screen.findByRole('button', { name: '完成这次练习' });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    await waitFor(() => {
+      expect(pendingCompletionStore.load(draft.userId, draft.sessionId))
+        .not.toBeNull();
+    });
+
+    await user.click(screen.getByRole('button', {
+      name: '这里存在伤害或危险',
+    }));
+    expect(screen.getByLabelText('current path')).toHaveTextContent(
+      `/training/${draft.sessionId}/safety-stop`,
+    );
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
+
+    rejectCompletion(new Error('response lost'));
+    await waitFor(() => {
+      expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
+    });
+    expect(screen.getByRole('heading', { name: '正在转到安全支持' }))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/训练完成|完成已记录|获得\s*10|转念一刻/))
+      .not.toBeInTheDocument();
+  });
+
+  it('rechecks a deterministic non-completable response and replaces with safety', async () => {
+    const user = userEvent.setup();
+    const checkTrainingSession = vi.fn()
+      .mockResolvedValueOnce('continue')
+      .mockResolvedValueOnce('continue')
+      .mockResolvedValueOnce('safety-stop');
+    const runtime: TrainingRuntimeRepository = {
+      startTraining: vi.fn(),
+      checkTrainingSession,
+    };
+    const complete = vi.fn(async () => {
+      throw new Error('session_not_completable');
+    });
+    const draft = expressionDraft();
+    renderTraining(draft, {
+      runtime,
+      progress: progressWith(complete),
+    });
+
+    const button = await screen.findByRole('button', { name: '完成这次练习' });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('current path')).toHaveTextContent(
+        `/training/${draft.sessionId}/safety-stop`,
+      );
+    });
+    expect(screen.queryByText(/训练完成|完成已记录|获得\s*10/))
+      .not.toBeInTheDocument();
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
+  });
+
+  it('lets pause hand an unresolved completion precheck to a server safety-stop', async () => {
+    const user = userEvent.setup();
+    let resolvePrecheck!: (value: 'safety-stop') => void;
+    const runtime: TrainingRuntimeRepository = {
+      startTraining: vi.fn(),
+      checkTrainingSession: vi.fn()
+        .mockResolvedValueOnce('continue')
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolvePrecheck = resolve;
+        })),
+    };
+    const complete = vi.fn(async () => ({
+      completionId: '55555555-5555-4555-8555-555555555555',
+      awarded: true as const,
+      pointsDelta: 10 as const,
+    }));
+    const draft = expressionDraft();
+    trainingDraftStore.save(draft);
+    renderRoutedTraining(draft, runtime, progressWith(complete));
+
+    const completeButton = await screen.findByRole('button', {
+      name: '完成这次练习',
+    });
+    await waitFor(() => expect(completeButton).toBeEnabled());
+    await user.click(completeButton);
+    await waitFor(() => {
+      expect(runtime.checkTrainingSession).toHaveBeenCalledTimes(2);
+    });
+
+    await user.click(screen.getByRole('button', { name: '暂时离开' }));
+    expect(screen.getByRole('heading', { name: '场景页' })).toBeInTheDocument();
+    resolvePrecheck('safety-stop');
+
+    expect(await screen.findByRole('heading', { name: '安全支持页' }))
+      .toBeInTheDocument();
+    expect(screen.getByLabelText('current path')).toHaveTextContent(
+      `/training/${draft.sessionId}/safety-stop`,
+    );
+    expect(complete).not.toHaveBeenCalled();
+    expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)).toBeNull();
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
+    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+      .toContain('"source":"server"');
+    expect(screen.queryByText(/训练完成|完成已记录|获得\s*10|转念一刻/))
+      .not.toBeInTheDocument();
+  });
+
+  it('lets pause hand a non-completable recheck to a server safety-stop', async () => {
+    const user = userEvent.setup();
+    let resolveRecheck!: (value: 'safety-stop') => void;
+    const runtime: TrainingRuntimeRepository = {
+      startTraining: vi.fn(),
+      checkTrainingSession: vi.fn()
+        .mockResolvedValueOnce('continue')
+        .mockResolvedValueOnce('continue')
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolveRecheck = resolve;
+        })),
+    };
+    const complete = vi.fn(async () => {
+      throw new Error('session_not_completable');
+    });
+    const draft = expressionDraft();
+    trainingDraftStore.save(draft);
+    renderRoutedTraining(draft, runtime, progressWith(complete));
+
+    const completeButton = await screen.findByRole('button', {
+      name: '完成这次练习',
+    });
+    await waitFor(() => expect(completeButton).toBeEnabled());
+    await user.click(completeButton);
+    await waitFor(() => {
+      expect(runtime.checkTrainingSession).toHaveBeenCalledTimes(3);
+    });
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId))
+      .not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '暂时离开' }));
+    expect(screen.getByRole('heading', { name: '场景页' })).toBeInTheDocument();
+    resolveRecheck('safety-stop');
+
+    expect(await screen.findByRole('heading', { name: '安全支持页' }))
+      .toBeInTheDocument();
+    expect(screen.getByLabelText('current path')).toHaveTextContent(
+      `/training/${draft.sessionId}/safety-stop`,
+    );
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)).toBeNull();
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
+    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+      .toContain('"source":"server"');
+    expect(screen.queryByText(/训练完成|完成已记录|获得\s*10|转念一刻/))
+      .not.toBeInTheDocument();
+  });
+
+  it('does not apply completion precheck safety after an unrelated external unmount', async () => {
+    const user = userEvent.setup();
+    let resolvePrecheck!: (value: 'safety-stop') => void;
+    const runtime: TrainingRuntimeRepository = {
+      startTraining: vi.fn(),
+      checkTrainingSession: vi.fn()
+        .mockResolvedValueOnce('continue')
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolvePrecheck = resolve;
+        })),
+    };
+    const complete = vi.fn(async () => ({
+      completionId: '55555555-5555-4555-8555-555555555555',
+      awarded: true as const,
+      pointsDelta: 10 as const,
+    }));
+    const draft = expressionDraft();
+    trainingDraftStore.save(draft);
+    renderRoutedTraining(draft, runtime, progressWith(complete));
+
+    const completeButton = await screen.findByRole('button', {
+      name: '完成这次练习',
+    });
+    await waitFor(() => expect(completeButton).toBeEnabled());
+    await user.click(completeButton);
+    await waitFor(() => {
+      expect(runtime.checkTrainingSession).toHaveBeenCalledTimes(2);
+    });
+    await user.click(screen.getByRole('button', { name: '浏览器返回' }));
+    expect(screen.getByRole('heading', { name: '外部页' })).toBeInTheDocument();
+
+    await act(async () => {
+      resolvePrecheck('safety-stop');
+    });
+
+    expect(screen.getByRole('heading', { name: '外部页' })).toBeInTheDocument();
+    expect(screen.getByLabelText('current path')).toHaveTextContent('/outside');
+    expect(complete).not.toHaveBeenCalled();
+    expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)?.status)
+      .toBe('active');
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
+    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+      .toBeNull();
+  });
+
+  it('does not apply completion recheck safety after an unrelated external unmount', async () => {
+    const user = userEvent.setup();
+    let resolveRecheck!: (value: 'safety-stop') => void;
+    const runtime: TrainingRuntimeRepository = {
+      startTraining: vi.fn(),
+      checkTrainingSession: vi.fn()
+        .mockResolvedValueOnce('continue')
+        .mockResolvedValueOnce('continue')
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolveRecheck = resolve;
+        })),
+    };
+    const complete = vi.fn(async () => {
+      throw new Error('session_not_completable');
+    });
+    const draft = expressionDraft();
+    trainingDraftStore.save(draft);
+    renderRoutedTraining(draft, runtime, progressWith(complete));
+
+    const completeButton = await screen.findByRole('button', {
+      name: '完成这次练习',
+    });
+    await waitFor(() => expect(completeButton).toBeEnabled());
+    await user.click(completeButton);
+    await waitFor(() => {
+      expect(runtime.checkTrainingSession).toHaveBeenCalledTimes(3);
+    });
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId))
+      .not.toBeNull();
+    await user.click(screen.getByRole('button', { name: '浏览器返回' }));
+    expect(screen.getByRole('heading', { name: '外部页' })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveRecheck('safety-stop');
+    });
+
+    expect(screen.getByRole('heading', { name: '外部页' })).toBeInTheDocument();
+    expect(screen.getByLabelText('current path')).toHaveTextContent('/outside');
+    expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)?.status)
+      .toBe('active');
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId))
+      .not.toBeNull();
+    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+      .toBeNull();
+  });
+
+  it.each([
+    'cohort_context_ambiguous',
+    'database_integrity_failure',
+  ])('treats %s as a deterministic non-celebratory rejection', async (errorName) => {
+    const user = userEvent.setup();
+    const complete = vi.fn(async () => {
+      throw new Error(errorName);
+    });
+    const draft = expressionDraft();
+    renderTraining(draft, { progress: progressWith(complete) });
+
+    const button = await screen.findByRole('button', { name: '完成这次练习' });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '完成记录未通过核对',
+    );
+    expect(screen.queryByText(/训练完成|完成已记录|获得\s*10|转念一刻/))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试记录' }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试连接' }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '返回场景页' }))
+      .toHaveAttribute('href', '/scenes');
+    expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
   });
 
   it.each([
@@ -476,6 +925,7 @@ describe('TrainingPage', () => {
               <TrainingPage
                 initialDraft={draft}
                 runtimeRepository={runtime}
+                progressRepository={progressWith()}
                 online
                 now={() => now}
               />
@@ -529,6 +979,7 @@ describe('TrainingPage', () => {
               <TrainingPage
                 initialDraft={draft}
                 runtimeRepository={runtime}
+                progressRepository={progressWith()}
                 online
                 now={() => now}
               />
@@ -646,6 +1097,7 @@ describe('TrainingPage', () => {
         <TrainingPage
           initialDraft={draft}
           runtimeRepository={runtime}
+          progressRepository={progressWith()}
           online={false}
           now={() => now}
         />
@@ -660,6 +1112,7 @@ describe('TrainingPage', () => {
         <TrainingPage
           initialDraft={draft}
           runtimeRepository={runtime}
+          progressRepository={progressWith()}
           online
           now={() => now}
         />

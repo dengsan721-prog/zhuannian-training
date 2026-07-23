@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { PrivateProgress } from '../../domain/progress/types';
+import type { ProgressRepository } from '../../lib/repositories/ProgressRepository';
 import type { SceneRepository } from '../../lib/repositories/SceneRepository';
 import { SceneList } from './SceneList';
 import { useScenes } from './useScenes';
@@ -7,7 +9,14 @@ const sceneListId = 'classic-scene-list';
 
 type SceneHomePageProps = {
   sceneRepository?: SceneRepository;
+  progressRepository?: ProgressRepository;
 };
+
+type ProgressSummaryState =
+  | { status: 'hidden' }
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'success'; progress: PrivateProgress };
 
 function compareText(left: string, right: string) {
   if (left < right) return -1;
@@ -15,11 +24,35 @@ function compareText(left: string, right: string) {
   return 0;
 }
 
-export function SceneHomePage({ sceneRepository }: SceneHomePageProps) {
+export function SceneHomePage({
+  sceneRepository,
+  progressRepository,
+}: SceneHomePageProps) {
   const { state, retry } = useScenes(sceneRepository);
+  const [progressState, setProgressState] = useState<ProgressSummaryState>(
+    progressRepository ? { status: 'loading' } : { status: 'hidden' },
+  );
+  const [progressAttempt, setProgressAttempt] = useState(0);
   const [relationship, setRelationship] = useState('');
   const [category, setCategory] = useState('');
   const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    if (!progressRepository) return undefined;
+    let active = true;
+    progressRepository.getPrivateProgress()
+      .then((value) => {
+        if (active) {
+          setProgressState({ status: 'success', progress: value });
+        }
+      })
+      .catch(() => {
+        if (active) setProgressState({ status: 'error' });
+      });
+    return () => {
+      active = false;
+    };
+  }, [progressAttempt, progressRepository]);
 
   const scenes = state.status === 'success' ? state.scenes : [];
   const sortedScenes = [...scenes].sort((left, right) => (
@@ -43,6 +76,46 @@ export function SceneHomePage({ sceneRepository }: SceneHomePageProps) {
       <section className="surface scene-home" aria-labelledby="scene-heading">
         <p className="eyebrow">今天想处理什么？</p>
         <h1 id="scene-heading">从最像你家的场景开始</h1>
+
+        {progressState.status === 'loading' && (
+          <p role="status">正在加载我的转念力……</p>
+        )}
+
+        {progressState.status === 'error' && (
+          <div className="scene-progress-message" role="alert">
+            <p>成长摘要加载失败，经典场景仍可继续使用。</p>
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => {
+                setProgressState({ status: 'loading' });
+                setProgressAttempt((current) => current + 1);
+              }}
+            >
+              重新加载成长摘要
+            </button>
+          </div>
+        )}
+
+        {progressState.status === 'success' && (
+          <section className="scene-progress-summary" aria-labelledby="scene-progress-heading">
+            <div>
+              <h2 id="scene-progress-heading">我的转念力</h2>
+              <strong>{progressState.progress.points} 点</strong>
+            </div>
+            <p>本周参与 {progressState.progress.thisWeekCompletions} 次</p>
+            {progressState.progress.classAggregate && (
+              <div className="scene-class-summary">
+                <span>班级共同目标</span>
+                <strong>
+                  {progressState.progress.classAggregate.completedScenes}
+                  {' / '}
+                  {progressState.progress.classAggregate.collectiveGoal}
+                </strong>
+              </div>
+            )}
+          </section>
+        )}
 
         {state.status === 'loading' && (
           <p role="status">正在加载经典场景……</p>

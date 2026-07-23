@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PublishedSceneVersion } from '../../domain/scenes/types';
+import type { ProgressRepository } from '../../lib/repositories/ProgressRepository';
 import type { SceneRepository } from '../../lib/repositories/SceneRepository';
 import { validPublishedScene } from '../../test/fixtures/scene';
 import { SceneHomePage } from './SceneHomePage';
@@ -43,10 +44,40 @@ const repositoryWith = (scenes: PublishedSceneVersion[]): SceneRepository => ({
   getPublishedById: vi.fn(async (id) => scenes.find((item) => item.id === id) ?? null),
 });
 
-function renderPage(repository: SceneRepository) {
+function progressRepository(): ProgressRepository {
+  return {
+    complete: vi.fn(),
+    saveReview: vi.fn(),
+    setSaved: vi.fn(),
+    listSaved: vi.fn(async () => []),
+    getPendingReview: vi.fn(async () => null),
+    getPrivateProgress: vi.fn(async () => ({
+      points: 25,
+      completedScenes: 3,
+      reviewsCompleted: 1,
+      thisWeekCompletions: 3,
+      badges: [],
+      unlockedSurprises: [],
+      classAggregate: {
+        completedScenes: 12,
+        activeMembers: 20,
+        collectiveGoal: 50,
+        goalReached: false,
+      },
+    })),
+  };
+}
+
+function renderPage(
+  repository: SceneRepository,
+  progress?: ProgressRepository,
+) {
   return render(
     <MemoryRouter>
-      <SceneHomePage sceneRepository={repository} />
+      <SceneHomePage
+        sceneRepository={repository}
+        progressRepository={progress}
+      />
     </MemoryRouter>,
   );
 }
@@ -65,6 +96,56 @@ describe('SceneHomePage', () => {
     expect(screen.getByRole('link', { name: '手机放不下' }))
       .toHaveAttribute('href', '/train/classic-scene-1');
     expect(screen.queryByText(/排行榜|末位/)).not.toBeInTheDocument();
+  });
+
+  it('adds only private and privacy-safe aggregate growth to the scene home', async () => {
+    renderPage(repositoryWith(classicScenes), progressRepository());
+
+    expect(await screen.findByText('手机放不下')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '我的转念力' }))
+      .toBeInTheDocument();
+    expect(screen.getByText('本周参与 3 次')).toBeInTheDocument();
+    expect(screen.getByText('班级共同目标')).toBeInTheDocument();
+    expect(screen.getByText('12 / 50')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(
+      /排行榜|排名|第\s*\d+\s*名|末位|落后|断签|思想正确率/,
+    );
+  });
+
+  it('announces progress-summary loading without blocking the scene catalog', async () => {
+    const progress = progressRepository();
+    progress.getPrivateProgress = vi.fn(
+      () => new Promise<Awaited<ReturnType<ProgressRepository['getPrivateProgress']>>>(
+        () => undefined,
+      ),
+    );
+
+    renderPage(repositoryWith(classicScenes), progress);
+
+    expect(screen.getByText('正在加载我的转念力……'))
+      .toHaveAttribute('role', 'status');
+    expect(await screen.findByText('手机放不下')).toBeInTheDocument();
+  });
+
+  it('keeps scenes available and retries a failed progress summary', async () => {
+    const progress = progressRepository();
+    const privateProgress = await progress.getPrivateProgress();
+    progress.getPrivateProgress = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(privateProgress);
+    const user = userEvent.setup();
+
+    renderPage(repositoryWith(classicScenes), progress);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '成长摘要加载失败',
+    );
+    expect(screen.getByText('手机放不下')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重新加载成长摘要' }));
+
+    expect(await screen.findByRole('heading', { name: '我的转念力' }))
+      .toBeInTheDocument();
+    expect(progress.getPrivateProgress).toHaveBeenCalledTimes(2);
   });
 
   it('announces loading while the catalog request is pending', () => {

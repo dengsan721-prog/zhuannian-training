@@ -1,12 +1,30 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ProgressRepository } from '../lib/repositories/ProgressRepository';
 import { AppRouter } from './router';
 
-function renderRoute(path: string) {
+const progressRepository = (): ProgressRepository => ({
+  complete: vi.fn(),
+  saveReview: vi.fn(),
+  setSaved: vi.fn(),
+  listSaved: vi.fn(async () => []),
+  getPendingReview: vi.fn(async () => null),
+  getPrivateProgress: vi.fn(async () => ({
+    points: 0,
+    completedScenes: 0,
+    reviewsCompleted: 0,
+    thisWeekCompletions: 0,
+    badges: [],
+    unlockedSurprises: [],
+    classAggregate: null,
+  })),
+});
+
+function renderRoute(path: string, progress?: ProgressRepository) {
   render(
     <MemoryRouter initialEntries={[path]}>
-      <AppRouter />
+      <AppRouter progressRepository={progress} />
     </MemoryRouter>,
   );
 }
@@ -42,5 +60,28 @@ describe('onboarding information routes', () => {
     expect(screen.getByText(/封闭试用期间，请联系发放班级码的教练/)).toBeInTheDocument();
     expect(screen.getByText(/入班后可使用支持入口/)).toBeInTheDocument();
     expect(screen.getByText(/正式工单功能尚未上线/)).toBeInTheDocument();
+  });
+});
+
+describe('private progress routes', () => {
+  afterEach(cleanup);
+
+  it('renders the private progress surface at /progress', async () => {
+    renderRoute('/progress', progressRepository());
+
+    expect(await screen.findByText('0 点')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '我的转念力' }))
+      .toBeInTheDocument();
+  });
+
+  it('renders the controlled follow-up form at /reviews/:completionId', () => {
+    renderRoute(
+      '/reviews/55555555-5555-4555-8555-555555555555',
+      progressRepository(),
+    );
+
+    expect(screen.getByRole('heading', { name: '后来发生了什么？' }))
+      .toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 });

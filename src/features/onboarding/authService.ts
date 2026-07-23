@@ -1,5 +1,6 @@
 import { getSupabaseClient } from '../../lib/supabase/client';
 import type { RequestInviteOtpInput, RequestInviteOtpResult, VerifyAndJoinInput } from './types';
+import { normalizeChineseMobile } from './phone';
 
 async function functionErrorCode(error: unknown): Promise<string> {
   if (typeof error !== 'object' || error === null || !('context' in error)) return 'request_failed';
@@ -26,17 +27,43 @@ export async function requestInviteOtp(input: RequestInviteOtpInput): Promise<Re
 
 export async function verifyAndJoin(input: VerifyAndJoinInput): Promise<{ cohortId: string }> {
   const supabase = getSupabaseClient();
-  const { error } = await supabase.auth.verifyOtp({
-    phone: input.phone,
-    token: input.token,
-    type: 'sms',
-  });
-  if (error) throw new Error('verification_failed');
+  let accessToken: string | null = null;
+
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    const candidateToken = !error ? data.session?.access_token : null;
+    if (candidateToken) {
+      const verified = await supabase.auth.getUser(candidateToken);
+      const verifiedPhone = verified.data.user?.phone
+        ? normalizeChineseMobile(verified.data.user.phone)
+        : null;
+      if (
+        !verified.error
+        && verifiedPhone === input.phone
+        && verified.data.user?.phone_confirmed_at
+      ) {
+        accessToken = candidateToken;
+      }
+    }
+  } catch {
+    // A missing local session is expected on the first verification attempt.
+  }
+
+  if (!accessToken) {
+    const { data, error } = await supabase.auth.verifyOtp({
+      phone: input.phone,
+      token: input.token,
+      type: 'sms',
+    });
+    if (error || !data.session?.access_token) throw new Error('verification_failed');
+    accessToken = data.session.access_token;
+  }
 
   const result = await supabase.functions.invoke<{ cohortId: string }>('complete-enrollment', {
     body: { requestId: input.requestId },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (result.error) throw new Error(await functionErrorCode(result.error));
+  if (result.error) throw new Error('enrollment_failed');
   if (!result.data) throw new Error('enrollment_failed');
   return result.data;
 }

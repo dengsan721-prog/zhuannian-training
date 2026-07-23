@@ -73,4 +73,43 @@ describe('PhoneVerifyPage', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('验证信息已失效，请重新获取验证码');
     expect(screen.queryByRole('button', { name: '完成入班' })).not.toBeInTheDocument();
   });
+
+  it('keeps the verified request and offers an enrollment retry after completion fails', async () => {
+    const verifyEnrollment = vi.fn()
+      .mockRejectedValueOnce(new Error('enrollment_failed'))
+      .mockResolvedValueOnce({ cohortId: 'cohort-1' });
+    render(
+      <PhoneVerifyPage
+        phone="+8613800138000"
+        requestId="request-1"
+        verifyEnrollment={verifyEnrollment}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('六位验证码'), '123456');
+    await userEvent.click(screen.getByRole('button', { name: '完成入班' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('手机号已验证，入班暂未完成，请重试');
+    await userEvent.click(screen.getByRole('button', { name: '重试入班' }));
+
+    expect(verifyEnrollment).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('已加入班级')).toBeInTheDocument();
+  });
+
+  it('keeps verification failures distinct from enrollment failures', async () => {
+    const verifyEnrollment = vi.fn().mockRejectedValue(new Error('verification_failed'));
+    render(
+      <PhoneVerifyPage
+        phone="+8613800138000"
+        requestId="request-1"
+        verifyEnrollment={verifyEnrollment}
+      />,
+    );
+
+    await userEvent.type(screen.getByLabelText('六位验证码'), '123456');
+    await userEvent.click(screen.getByRole('button', { name: '完成入班' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('验证码无效或已过期，请重试');
+    expect(screen.queryByRole('button', { name: '重试入班' })).not.toBeInTheDocument();
+  });
 });

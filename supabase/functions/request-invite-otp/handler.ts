@@ -1,8 +1,7 @@
-import { json, preflight } from '../_shared/http.ts';
+import { json, preflight, readBoundedJson } from '../_shared/http.ts';
 import { normalizeChineseMobile } from '../_shared/phone.ts';
 
 const CONSENT_VERSION = '2026-07-22';
-const MAX_BODY_BYTES = 4096;
 const INVITE_CODE = /^[A-Z0-9]{6,64}$/;
 
 export interface ValidatedInviteRequest {
@@ -16,6 +15,7 @@ export interface ValidatedInviteRequest {
 export type ChallengeDecision = {
   status: 'accepted';
   requestId: string;
+  deliveryAttemptId?: string;
   shouldSendOtp: boolean;
   retryAfterSeconds: number;
 } | {
@@ -28,29 +28,30 @@ export type ChallengeDecision = {
   requestId: string;
   shouldSendOtp: false;
   retryAfterSeconds: number;
+} | {
+  status: 'delivery_pending';
+  requestId: string;
+  deliveryAttemptId: string;
+  shouldSendOtp: false;
+  retryAfterSeconds: number;
 };
 
 export interface RequestInviteOtpDependencies {
   appOrigin: string;
   requestChallenge(input: ValidatedInviteRequest): Promise<ChallengeDecision>;
-  sendOtp(input: { phone: string; requestId: string }): Promise<void>;
+  sendOtp(input: {
+    phone: string;
+    requestId: string;
+  }): Promise<{ status: 'sent' | 'failed' | 'unknown' }>;
+  finalizeDelivery(input: {
+    requestId: string;
+    deliveryAttemptId: string;
+    status: 'sent' | 'failed';
+  }): Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-async function boundedJson(request: Request): Promise<unknown | 'too_large' | 'invalid_json'> {
-  const contentLength = Number(request.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) return 'too_large';
-
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) return 'too_large';
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return 'invalid_json';
-  }
 }
 
 export function createRequestInviteOtpHandler(dependencies: RequestInviteOtpDependencies) {
@@ -59,9 +60,15 @@ export function createRequestInviteOtpHandler(dependencies: RequestInviteOtpDepe
     if (request.method === 'OPTIONS') return preflight(appOrigin);
     if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, appOrigin);
 
-    const parsed = await boundedJson(request);
-    if (parsed === 'too_large') return json({ error: 'request_too_large' }, 413, appOrigin);
-    if (parsed === 'invalid_json' || !isRecord(parsed)) {
+    const body = await readBoundedJson(request);
+    if (!body.ok && body.error === 'unsupported_media_type') {
+      return json({ error: 'unsupported_media_type' }, 415, appOrigin);
+    }
+    if (!body.ok && body.error === 'request_too_large') {
+      return json({ error: 'request_too_large' }, 413, appOrigin);
+    }
+    const parsed = body.ok ? body.value : null;
+    if (!body.ok || !isRecord(parsed)) {
       return json({ error: 'invalid_request' }, 400, appOrigin);
     }
 
@@ -101,11 +108,37 @@ export function createRequestInviteOtpHandler(dependencies: RequestInviteOtpDepe
     if (decision.status === 'rate_limited') {
       return json({ error: 'retry_later', retryAfterSeconds: decision.retryAfterSeconds }, 429, appOrigin);
     }
+    if (decision.status === 'delivery_pending') {
+      return json({
+        error: 'sms_delivery_unconfirmed',
+        retryAfterSeconds: decision.retryAfterSeconds,
+      }, 503, appOrigin);
+    }
 
     if (decision.shouldSendOtp) {
+      if (!decision.deliveryAttemptId) {
+        return json({ error: 'request_failed' }, 500, appOrigin);
+      }
+      let delivery: { status: 'sent' | 'failed' | 'unknown' };
       try {
-        await dependencies.sendOtp({ phone, requestId: decision.requestId });
+        delivery = await dependencies.sendOtp({ phone, requestId: decision.requestId });
       } catch {
+        return json({ error: 'sms_delivery_unconfirmed' }, 503, appOrigin);
+      }
+
+      if (delivery.status === 'unknown') {
+        return json({ error: 'sms_delivery_unconfirmed' }, 503, appOrigin);
+      }
+      try {
+        await dependencies.finalizeDelivery({
+          requestId: decision.requestId,
+          deliveryAttemptId: decision.deliveryAttemptId,
+          status: delivery.status,
+        });
+      } catch {
+        return json({ error: 'sms_delivery_unconfirmed' }, 503, appOrigin);
+      }
+      if (delivery.status === 'failed') {
         return json({ error: 'sms_unavailable' }, 503, appOrigin);
       }
     }

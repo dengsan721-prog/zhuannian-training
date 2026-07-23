@@ -81,6 +81,7 @@ create temporary table challenge_calls (
   step integer primary key,
   decision text not null,
   request_id uuid,
+  delivery_attempt_id uuid,
   should_send boolean not null,
   retry_after_seconds integer not null
 );
@@ -95,6 +96,11 @@ select results_eq(
   $$select decision, should_send, retry_after_seconds from challenge_calls where step = 1$$,
   $$values ('accepted'::text, true, 60)$$,
   'first valid request creates a sendable challenge'
+);
+select * from public.finalize_enrollment_otp_delivery(
+  (select delivery_attempt_id from challenge_calls where step = 1),
+  (select request_id from challenge_calls where step = 1),
+  'sent'
 );
 
 insert into challenge_calls
@@ -113,20 +119,36 @@ select ok(
 update public.enrollment_challenges
 set last_sent_at = now() - interval '61 seconds'
 where id = (select request_id from challenge_calls where step = 1);
+update public.enrollment_sms_delivery_attempts
+set finalized_at = now() - interval '61 seconds'
+where id = (select delivery_attempt_id from challenge_calls where step = 1);
 insert into challenge_calls
 select 3, result.*
 from public.request_enrollment_challenge(
   'rpc-hash', 'rpc-phone-hmac', true, '2026-07-22', '2026-07-22'
 ) result;
+select * from public.finalize_enrollment_otp_delivery(
+  (select delivery_attempt_id from challenge_calls where step = 3),
+  (select request_id from challenge_calls where step = 3),
+  'sent'
+);
 
 update public.enrollment_challenges
 set last_sent_at = now() - interval '61 seconds'
 where id = (select request_id from challenge_calls where step = 1);
+update public.enrollment_sms_delivery_attempts
+set finalized_at = now() - interval '61 seconds'
+where id = (select delivery_attempt_id from challenge_calls where step = 3);
 insert into challenge_calls
 select 4, result.*
 from public.request_enrollment_challenge(
   'rpc-hash', 'rpc-phone-hmac', true, '2026-07-22', '2026-07-22'
 ) result;
+select * from public.finalize_enrollment_otp_delivery(
+  (select delivery_attempt_id from challenge_calls where step = 4),
+  (select request_id from challenge_calls where step = 4),
+  'sent'
+);
 
 select is(
   (select send_count from public.enrollment_challenges where id = (select request_id from challenge_calls where step = 1)),
@@ -157,17 +179,18 @@ select results_eq(
 
 insert into public.enrollment_challenges(
   id, invite_id, phone_hmac, adult_attested, privacy_consent_version,
-  service_boundary_version, expires_at, user_id
+  service_boundary_version, expires_at, user_id, send_count,
+  send_window_started_at, last_sent_at
 ) values
-  ('13000000-0000-0000-0000-000000000001','12000000-0000-0000-0000-000000000001','success-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null),
-  ('13000000-0000-0000-0000-000000000002','12000000-0000-0000-0000-000000000001','capacity-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null),
-  ('13000000-0000-0000-0000-000000000003','12000000-0000-0000-0000-000000000002','expired-challenge-phone',true,'2026-07-22','2026-07-22',now() - interval '1 minute',null),
-  ('13000000-0000-0000-0000-000000000004','12000000-0000-0000-0000-000000000003','expired-invite-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null),
-  ('13000000-0000-0000-0000-000000000005','12000000-0000-0000-0000-000000000004','closed-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null),
-  ('13000000-0000-0000-0000-000000000006','12000000-0000-0000-0000-000000000005','deletion-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null),
-  ('13000000-0000-0000-0000-000000000007','12000000-0000-0000-0000-000000000006','existing-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null),
-  ('13000000-0000-0000-0000-000000000008','12000000-0000-0000-0000-000000000007','withdrawn-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null),
-  ('13000000-0000-0000-0000-000000000009','12000000-0000-0000-0000-000000000009','bound-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes','00000000-0000-0000-0000-000000000108');
+  ('13000000-0000-0000-0000-000000000001','12000000-0000-0000-0000-000000000001','success-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000002','12000000-0000-0000-0000-000000000001','capacity-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000003','12000000-0000-0000-0000-000000000002','expired-challenge-phone',true,'2026-07-22','2026-07-22',now() - interval '1 minute',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000004','12000000-0000-0000-0000-000000000003','expired-invite-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000005','12000000-0000-0000-0000-000000000004','closed-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000006','12000000-0000-0000-0000-000000000005','deletion-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000007','12000000-0000-0000-0000-000000000006','existing-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000008','12000000-0000-0000-0000-000000000007','withdrawn-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes',null,1,now(),now()),
+  ('13000000-0000-0000-0000-000000000009','12000000-0000-0000-0000-000000000009','bound-phone',true,'2026-07-22','2026-07-22',now() + interval '10 minutes','00000000-0000-0000-0000-000000000108',1,now(),now());
 
 select results_eq(
   $$select cohort_id from public.complete_enrollment(

@@ -11,15 +11,35 @@ create table public.enrollment_challenges (
   service_boundary_version text not null check (service_boundary_version = '2026-07-22'),
   expires_at timestamptz not null,
   used_at timestamptz,
-  user_id uuid references auth.users(id) on delete cascade,
-  send_count smallint not null default 1 check (send_count between 1 and 3),
-  send_window_started_at timestamptz not null default now(),
-  last_sent_at timestamptz not null default now(),
+  user_id uuid references auth.users(id) on delete set null,
+  send_count smallint not null default 0 check (send_count between 0 and 3),
+  send_window_started_at timestamptz,
+  last_sent_at timestamptz,
   created_at timestamptz not null default now()
 );
 create index enrollment_challenges_invite_phone_created_idx
 on public.enrollment_challenges(invite_id, phone_hmac, created_at desc);
 alter table public.enrollment_challenges enable row level security;
+
+create table public.enrollment_sms_delivery_attempts (
+  id uuid primary key default gen_random_uuid(),
+  challenge_id uuid not null
+    references public.enrollment_challenges(id) on delete restrict,
+  phone_hmac text not null check (char_length(phone_hmac) > 0),
+  status text not null check (status in ('pending', 'sent', 'failed', 'unknown')),
+  reserved_at timestamptz not null default now(),
+  finalized_at timestamptz,
+  check (
+    (status = 'pending' and finalized_at is null)
+    or (status <> 'pending' and finalized_at is not null)
+  )
+);
+create unique index enrollment_sms_one_pending_per_phone_idx
+on public.enrollment_sms_delivery_attempts(phone_hmac)
+where status = 'pending';
+create index enrollment_sms_phone_status_time_idx
+on public.enrollment_sms_delivery_attempts(phone_hmac, status, finalized_at desc);
+alter table public.enrollment_sms_delivery_attempts enable row level security;
 
 create table public.consent_events (
   id uuid primary key default gen_random_uuid(),
@@ -44,6 +64,7 @@ create function public.request_enrollment_challenge(
 returns table(
   decision text,
   request_id uuid,
+  delivery_attempt_id uuid,
   should_send boolean,
   retry_after_seconds integer
 )
@@ -54,27 +75,35 @@ as $$
 declare
   selected_invite public.cohort_invites%rowtype;
   selected_challenge public.enrollment_challenges%rowtype;
-  challenge_exists boolean;
+  selected_attempt public.enrollment_sms_delivery_attempts%rowtype;
   cohort_status text;
-  v_now timestamptz := clock_timestamp();
+  successful_sends integer;
+  v_now timestamptz;
 begin
   if p_adult_attested is not true
-    or p_privacy_consent_version <> '2026-07-22'
-    or p_service_boundary_version <> '2026-07-22'
+    or p_privacy_consent_version is distinct from '2026-07-22'
+    or p_service_boundary_version is distinct from '2026-07-22'
   then
     raise exception 'consent_required';
   end if;
-  if coalesce(char_length(p_invite_hash), 0) = 0 or coalesce(char_length(p_phone_hmac), 0) = 0 then
+  if coalesce(char_length(p_invite_hash), 0) = 0
+    or coalesce(char_length(p_phone_hmac), 0) = 0
+  then
     raise exception 'invalid_request';
   end if;
 
-  select * into selected_invite
-  from public.cohort_invites
-  where code_hash = p_invite_hash;
-
+  -- Reject an invalid invite before touching phone-scoped OTP state.
+  select i.* into selected_invite
+  from public.cohort_invites i
+  join public.cohorts c on c.id = i.cohort_id
+  where i.code_hash = p_invite_hash
+    and i.expires_at > clock_timestamp()
+    and i.use_count < i.max_uses
+    and c.status = 'active';
   if not found then
     decision := 'invalid_invite';
     request_id := null;
+    delivery_attempt_id := null;
     should_send := false;
     retry_after_seconds := 0;
     return next;
@@ -82,32 +111,18 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(hashtextextended(
-    selected_invite.id::text || ':' || p_phone_hmac,
+    'enrollment-phone:' || p_phone_hmac,
     0
   ));
-
-  select * into selected_challenge
-  from public.enrollment_challenges
-  where invite_id = selected_invite.id
-    and phone_hmac = p_phone_hmac
-    and used_at is null
-    and expires_at > v_now
-  order by created_at desc
-  limit 1
-  for update;
-  challenge_exists := found;
 
   select * into selected_invite
   from public.cohort_invites
   where id = selected_invite.id
   for update;
-
-  if not found
-    or selected_invite.expires_at <= v_now
-    or selected_invite.use_count >= selected_invite.max_uses
-  then
+  if not found then
     decision := 'invalid_invite';
     request_id := null;
+    delivery_attempt_id := null;
     should_send := false;
     retry_after_seconds := 0;
     return next;
@@ -119,91 +134,313 @@ begin
   where id = selected_invite.cohort_id
   for update;
 
-  if not found or cohort_status <> 'active' then
+  -- Locks may wait. All expiry, cooldown and rolling-window decisions use this refreshed time.
+  v_now := clock_timestamp();
+  if selected_invite.expires_at <= v_now
+    or selected_invite.use_count >= selected_invite.max_uses
+    or not found
+    or cohort_status <> 'active'
+  then
     decision := 'invalid_invite';
     request_id := null;
+    delivery_attempt_id := null;
     should_send := false;
     retry_after_seconds := 0;
     return next;
     return;
   end if;
 
-  if challenge_exists then
-    if selected_challenge.send_window_started_at > v_now - interval '10 minutes'
-      and selected_challenge.send_count >= 3
-    then
-      decision := 'rate_limited';
-      request_id := selected_challenge.id;
-      should_send := false;
-      retry_after_seconds := greatest(
-        1,
-        ceil(extract(epoch from (
-          selected_challenge.send_window_started_at + interval '10 minutes' - v_now
-        )))::integer
-      );
-      return next;
-      return;
-    end if;
+  -- An interrupted provider call remains fail-closed for the entire OTP lifetime.
+  update public.enrollment_sms_delivery_attempts
+  set status = 'unknown',
+      finalized_at = v_now
+  where phone_hmac = p_phone_hmac
+    and status = 'pending'
+    and reserved_at <= v_now - interval '10 minutes';
 
-    if selected_challenge.last_sent_at > v_now - interval '60 seconds' then
-      decision := 'accepted';
-      request_id := selected_challenge.id;
-      should_send := false;
-      retry_after_seconds := greatest(
-        1,
-        ceil(extract(epoch from (
-          selected_challenge.last_sent_at + interval '60 seconds' - v_now
-        )))::integer
-      );
-      return next;
-      return;
-    end if;
-
-    if selected_challenge.send_window_started_at <= v_now - interval '10 minutes' then
-      update public.enrollment_challenges
-      set send_count = 1,
-          send_window_started_at = v_now,
-          last_sent_at = v_now
-      where id = selected_challenge.id;
-    else
-      update public.enrollment_challenges
-      set send_count = send_count + 1,
-          last_sent_at = v_now
-      where id = selected_challenge.id;
-    end if;
-
-    decision := 'accepted';
-    request_id := selected_challenge.id;
-    should_send := true;
-    retry_after_seconds := 60;
+  select a.* into selected_attempt
+  from public.enrollment_sms_delivery_attempts a
+  where a.phone_hmac = p_phone_hmac
+    and a.status = 'pending'
+  order by a.reserved_at desc
+  limit 1
+  for update;
+  if found then
+    decision := 'delivery_pending';
+    request_id := selected_attempt.challenge_id;
+    delivery_attempt_id := selected_attempt.id;
+    should_send := false;
+    retry_after_seconds := greatest(
+      1,
+      ceil(extract(epoch from (
+        selected_attempt.reserved_at + interval '10 minutes' - v_now
+      )))::integer
+    );
     return next;
     return;
   end if;
 
-  insert into public.enrollment_challenges(
-    invite_id,
+  select count(*) into successful_sends
+  from public.enrollment_sms_delivery_attempts a
+  where a.phone_hmac = p_phone_hmac
+    and a.status = 'sent'
+    and a.finalized_at > v_now - interval '10 minutes';
+
+  select a.* into selected_attempt
+  from public.enrollment_sms_delivery_attempts a
+  where a.phone_hmac = p_phone_hmac
+    and a.status = 'sent'
+    and a.finalized_at > v_now - interval '10 minutes'
+  order by a.finalized_at desc
+  limit 1;
+
+  if successful_sends >= 3 then
+    decision := 'rate_limited';
+    request_id := selected_attempt.challenge_id;
+    delivery_attempt_id := selected_attempt.id;
+    should_send := false;
+    retry_after_seconds := greatest(
+      1,
+      ceil(extract(epoch from (
+        (
+          select min(a.finalized_at)
+          from public.enrollment_sms_delivery_attempts a
+          where a.phone_hmac = p_phone_hmac
+            and a.status = 'sent'
+            and a.finalized_at > v_now - interval '10 minutes'
+        ) + interval '10 minutes' - v_now
+      )))::integer
+    );
+    return next;
+    return;
+  end if;
+
+  if selected_attempt.id is not null
+    and selected_attempt.finalized_at > v_now - interval '60 seconds'
+  then
+    select * into selected_challenge
+    from public.enrollment_challenges
+    where id = selected_attempt.challenge_id;
+    if found
+      and selected_challenge.invite_id = selected_invite.id
+      and selected_challenge.used_at is null
+      and selected_challenge.expires_at > v_now
+    then
+      decision := 'accepted';
+    else
+      decision := 'rate_limited';
+    end if;
+    request_id := selected_attempt.challenge_id;
+    delivery_attempt_id := selected_attempt.id;
+    should_send := false;
+    retry_after_seconds := greatest(
+      1,
+      ceil(extract(epoch from (
+        selected_attempt.finalized_at + interval '60 seconds' - v_now
+      )))::integer
+    );
+    return next;
+    return;
+  end if;
+
+  select * into selected_challenge
+  from public.enrollment_challenges
+  where invite_id = selected_invite.id
+    and phone_hmac = p_phone_hmac
+    and used_at is null
+    and (last_sent_at is null or expires_at > v_now)
+  order by created_at desc
+  limit 1
+  for update;
+
+  if not found then
+    insert into public.enrollment_challenges(
+      invite_id,
+      phone_hmac,
+      adult_attested,
+      privacy_consent_version,
+      service_boundary_version,
+      expires_at
+    ) values (
+      selected_invite.id,
+      p_phone_hmac,
+      true,
+      p_privacy_consent_version,
+      p_service_boundary_version,
+      v_now
+    )
+    returning * into selected_challenge;
+  end if;
+
+  insert into public.enrollment_sms_delivery_attempts(
+    challenge_id,
     phone_hmac,
-    adult_attested,
-    privacy_consent_version,
-    service_boundary_version,
-    expires_at,
-    send_window_started_at,
-    last_sent_at
+    status,
+    reserved_at
   ) values (
-    selected_invite.id,
+    selected_challenge.id,
     p_phone_hmac,
-    true,
-    p_privacy_consent_version,
-    p_service_boundary_version,
-    v_now + interval '10 minutes',
-    v_now,
+    'pending',
     v_now
   )
-  returning id into request_id;
+  returning id into delivery_attempt_id;
 
   decision := 'accepted';
+  request_id := selected_challenge.id;
   should_send := true;
   retry_after_seconds := 60;
+  return next;
+end;
+$$;
+
+create function public.finalize_enrollment_otp_delivery(
+  p_delivery_attempt_id uuid,
+  p_request_id uuid,
+  p_status text
+)
+returns table(delivery_status text, request_id uuid)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_attempt public.enrollment_sms_delivery_attempts%rowtype;
+  selected_challenge public.enrollment_challenges%rowtype;
+  v_now timestamptz;
+begin
+  if p_status is null or p_status not in ('sent', 'failed') then
+    raise exception 'invalid_delivery_status';
+  end if;
+
+  select * into selected_attempt
+  from public.enrollment_sms_delivery_attempts
+  where id = p_delivery_attempt_id;
+  if not found then raise exception 'delivery_attempt_not_found'; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(
+    'enrollment-phone:' || selected_attempt.phone_hmac,
+    0
+  ));
+
+  select * into selected_attempt
+  from public.enrollment_sms_delivery_attempts
+  where id = p_delivery_attempt_id
+  for update;
+  if not found or selected_attempt.challenge_id <> p_request_id then
+    raise exception 'delivery_attempt_mismatch';
+  end if;
+
+  if selected_attempt.status <> 'pending' then
+    if selected_attempt.status <> p_status then
+      raise exception 'delivery_status_conflict';
+    end if;
+    delivery_status := selected_attempt.status;
+    request_id := selected_attempt.challenge_id;
+    return next;
+    return;
+  end if;
+
+  v_now := clock_timestamp();
+  if selected_attempt.reserved_at <= v_now - interval '10 minutes' then
+    update public.enrollment_sms_delivery_attempts
+    set status = 'unknown',
+        finalized_at = v_now
+    where id = selected_attempt.id;
+
+    delivery_status := 'unknown';
+    request_id := selected_attempt.challenge_id;
+    return next;
+    return;
+  end if;
+
+  if p_status = 'failed' then
+    update public.enrollment_sms_delivery_attempts
+    set status = 'failed',
+        finalized_at = v_now
+    where id = selected_attempt.id;
+  else
+    select * into selected_challenge
+    from public.enrollment_challenges
+    where id = p_request_id
+    for update;
+    if not found or selected_challenge.phone_hmac <> selected_attempt.phone_hmac then
+      raise exception 'delivery_attempt_mismatch';
+    end if;
+
+    update public.enrollment_sms_delivery_attempts
+    set status = 'sent',
+        finalized_at = v_now
+    where id = selected_attempt.id;
+
+    update public.enrollment_challenges
+    set send_count = case
+          when send_window_started_at is null
+            or send_window_started_at <= v_now - interval '10 minutes'
+          then 1
+          else send_count + 1
+        end,
+        send_window_started_at = case
+          when send_window_started_at is null
+            or send_window_started_at <= v_now - interval '10 minutes'
+          then v_now
+          else send_window_started_at
+        end,
+        last_sent_at = v_now,
+        expires_at = v_now + interval '10 minutes'
+    where id = selected_challenge.id;
+  end if;
+
+  delivery_status := p_status;
+  request_id := selected_attempt.challenge_id;
+  return next;
+end;
+$$;
+
+create function public.bind_enrollment_challenge_user(
+  p_request_id uuid,
+  p_user_id uuid,
+  p_phone_hmac text
+)
+returns table(bound boolean)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_challenge public.enrollment_challenges%rowtype;
+begin
+  select * into selected_challenge
+  from public.enrollment_challenges
+  where id = p_request_id;
+  if not found then raise exception 'enrollment_challenge_not_found'; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(
+    'enrollment-phone:' || selected_challenge.phone_hmac,
+    0
+  ));
+
+  select * into selected_challenge
+  from public.enrollment_challenges
+  where id = p_request_id
+  for update;
+  if not found then raise exception 'enrollment_challenge_not_found'; end if;
+  if selected_challenge.phone_hmac <> p_phone_hmac
+    or selected_challenge.used_at is not null
+  then
+    raise exception 'enrollment_challenge_mismatch';
+  end if;
+  if selected_challenge.user_id is not null
+    and selected_challenge.user_id <> p_user_id
+  then
+    raise exception 'enrollment_challenge_user_mismatch';
+  end if;
+
+  update public.enrollment_challenges
+  set user_id = p_user_id
+  where id = selected_challenge.id
+    and user_id is null;
+
+  bound := true;
   return next;
 end;
 $$;
@@ -226,6 +463,7 @@ declare
   membership_inserted integer;
   profile_exists boolean;
   membership_exists boolean;
+  v_now timestamptz;
 begin
   select * into selected_challenge
   from public.enrollment_challenges
@@ -233,7 +471,7 @@ begin
   if not found then raise exception 'enrollment_challenge_not_found'; end if;
 
   perform pg_advisory_xact_lock(hashtextextended(
-    selected_challenge.invite_id::text || ':' || selected_challenge.phone_hmac,
+    'enrollment-phone:' || selected_challenge.phone_hmac,
     0
   ));
 
@@ -250,8 +488,13 @@ begin
   then
     raise exception 'enrollment_challenge_mismatch';
   end if;
-  if selected_challenge.user_id is not null and selected_challenge.user_id <> p_user_id then
+  if selected_challenge.user_id is not null
+    and selected_challenge.user_id <> p_user_id
+  then
     raise exception 'enrollment_challenge_user_mismatch';
+  end if;
+  if selected_challenge.last_sent_at is null then
+    raise exception 'enrollment_challenge_not_sent';
   end if;
 
   select * into selected_invite
@@ -280,10 +523,12 @@ begin
     return next;
     return;
   end if;
-  if selected_challenge.expires_at <= clock_timestamp() then
+
+  v_now := clock_timestamp();
+  if selected_challenge.expires_at <= v_now then
     raise exception 'enrollment_challenge_expired';
   end if;
-  if selected_invite.expires_at <= clock_timestamp() then
+  if selected_invite.expires_at <= v_now then
     raise exception 'invite_invalid_or_expired';
   end if;
   if cohort_status <> 'active' then
@@ -334,7 +579,8 @@ begin
   );
 
   update public.enrollment_challenges
-  set used_at = clock_timestamp(), user_id = p_user_id
+  set used_at = clock_timestamp(),
+      user_id = p_user_id
   where id = selected_challenge.id;
 
   cohort_id := selected_invite.cohort_id;
@@ -342,14 +588,25 @@ begin
 end;
 $$;
 
+revoke all on public.consent_events from public, anon, authenticated;
 grant select on public.consent_events to authenticated;
+
 revoke all on public.enrollment_challenges from public, anon, authenticated;
-revoke all on public.consent_events from anon;
-revoke insert, update, delete on public.consent_events from authenticated;
+revoke all on public.enrollment_sms_delivery_attempts from public, anon, authenticated;
 
 revoke all on function public.request_enrollment_challenge(text, text, boolean, text, text)
 from public, anon, authenticated;
 grant execute on function public.request_enrollment_challenge(text, text, boolean, text, text)
+to service_role;
+
+revoke all on function public.finalize_enrollment_otp_delivery(uuid, uuid, text)
+from public, anon, authenticated;
+grant execute on function public.finalize_enrollment_otp_delivery(uuid, uuid, text)
+to service_role;
+
+revoke all on function public.bind_enrollment_challenge_user(uuid, uuid, text)
+from public, anon, authenticated;
+grant execute on function public.bind_enrollment_challenge_user(uuid, uuid, text)
 to service_role;
 
 revoke all on function public.complete_enrollment(uuid, uuid, text)

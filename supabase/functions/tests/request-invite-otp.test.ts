@@ -5,6 +5,13 @@ import {
 } from '../request-invite-otp/handler';
 
 const appOrigin = 'https://pilot.example.com';
+type ReviewDependencies = RequestInviteOtpDependencies & {
+  finalizeDelivery(input: {
+    requestId: string;
+    deliveryAttemptId: string;
+    status: 'sent' | 'failed';
+  }): Promise<void>;
+};
 
 function validRequest(overrides: Record<string, unknown> = {}) {
   return new Request('http://localhost/functions/v1/request-invite-otp', {
@@ -25,17 +32,19 @@ function validRequest(overrides: Record<string, unknown> = {}) {
 }
 
 function dependencies(
-  overrides: Partial<RequestInviteOtpDependencies> = {},
-): RequestInviteOtpDependencies {
+  overrides: Partial<ReviewDependencies> = {},
+): ReviewDependencies {
   return {
     appOrigin,
     requestChallenge: vi.fn().mockResolvedValue({
       status: 'accepted',
       requestId: 'request-1',
+      deliveryAttemptId: 'attempt-1',
       shouldSendOtp: true,
       retryAfterSeconds: 60,
     }),
-    sendOtp: vi.fn().mockResolvedValue(undefined),
+    sendOtp: vi.fn().mockResolvedValue({ status: 'sent' }),
+    finalizeDelivery: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -63,6 +72,11 @@ describe('request-invite-otp handler', () => {
     expect(deps.sendOtp).toHaveBeenCalledWith({
       phone: '+8613800138000',
       requestId: 'request-1',
+    });
+    expect(deps.finalizeDelivery).toHaveBeenCalledWith({
+      requestId: 'request-1',
+      deliveryAttemptId: 'attempt-1',
+      status: 'sent',
     });
     expect(response.headers.get('access-control-allow-origin')).toBe(appOrigin);
     expect(response.headers.get('access-control-allow-methods')).toBe('POST, OPTIONS');
@@ -108,6 +122,29 @@ describe('request-invite-otp handler', () => {
       retryAfterSeconds: 42,
     });
     expect(deps.sendOtp).not.toHaveBeenCalled();
+    expect(deps.finalizeDelivery).not.toHaveBeenCalled();
+  });
+
+  it('fails closed while an earlier provider delivery is still unconfirmed', async () => {
+    const deps = dependencies({
+      requestChallenge: vi.fn().mockResolvedValue({
+        status: 'delivery_pending',
+        requestId: 'request-1',
+        deliveryAttemptId: 'attempt-1',
+        shouldSendOtp: false,
+        retryAfterSeconds: 300,
+      }),
+    });
+
+    const response = await createRequestInviteOtpHandler(deps)(validRequest());
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: 'sms_delivery_unconfirmed',
+      retryAfterSeconds: 300,
+    });
+    expect(deps.sendOtp).not.toHaveBeenCalled();
+    expect(deps.finalizeDelivery).not.toHaveBeenCalled();
   });
 
   it('returns a generic rate response without sending OTP', async () => {
@@ -154,9 +191,37 @@ describe('request-invite-otp handler', () => {
     const body = await response.text();
 
     expect(response.status).toBe(503);
-    expect(body).toBe('{"error":"sms_unavailable"}');
+    expect(body).toBe('{"error":"sms_delivery_unconfirmed"}');
     expect(body).not.toContain('+8613800138000');
     expect(body).not.toContain('secret-key');
+    expect(deps.finalizeDelivery).not.toHaveBeenCalled();
+  });
+
+  it('records an explicit provider rejection as failed without consuming a successful send', async () => {
+    const deps = dependencies({
+      sendOtp: vi.fn().mockResolvedValue({ status: 'failed' }),
+    });
+
+    const response = await createRequestInviteOtpHandler(deps)(validRequest());
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: 'sms_unavailable' });
+    expect(deps.finalizeDelivery).toHaveBeenCalledWith({
+      requestId: 'request-1',
+      deliveryAttemptId: 'attempt-1',
+      status: 'failed',
+    });
+  });
+
+  it('does not claim acceptance when successful provider delivery cannot be finalized', async () => {
+    const deps = dependencies({
+      finalizeDelivery: vi.fn().mockRejectedValue(new Error('database secret detail')),
+    });
+
+    const response = await createRequestInviteOtpHandler(deps)(validRequest());
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: 'sms_delivery_unconfirmed' });
   });
 
   it('rejects oversized JSON without parsing it', async () => {
@@ -166,6 +231,59 @@ describe('request-invite-otp handler', () => {
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({ error: 'request_too_large' });
     expect(deps.requestChallenge).not.toHaveBeenCalled();
+  });
+
+  it.each(['text/plain', 'application/x-www-form-urlencoded'])(
+    'rejects hostile simple POST content type %s before dependencies',
+    async (contentType) => {
+      const deps = dependencies();
+      const request = new Request('http://localhost/functions/v1/request-invite-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': contentType, Origin: appOrigin },
+        body: JSON.stringify({
+          phone: '13800138000',
+          inviteCode: 'ABC123',
+          adultAttested: true,
+          privacyConsentVersion: '2026-07-22',
+          serviceBoundaryVersion: '2026-07-22',
+        }),
+      });
+
+      const response = await createRequestInviteOtpHandler(deps)(request);
+
+      expect(response.status).toBe(415);
+      await expect(response.json()).resolves.toEqual({ error: 'unsupported_media_type' });
+      expect(deps.requestChallenge).not.toHaveBeenCalled();
+      expect(deps.sendOtp).not.toHaveBeenCalled();
+    },
+  );
+
+  it('cancels a chunked body as soon as it exceeds 4096 bytes', async () => {
+    const deps = dependencies();
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"padding":"'));
+        controller.enqueue(new Uint8Array(4096));
+        controller.enqueue(new Uint8Array(4096));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const request = new Request('http://localhost/functions/v1/request-invite-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Origin: appOrigin },
+      body: stream,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    const response = await createRequestInviteOtpHandler(deps)(request);
+
+    expect(response.status).toBe(413);
+    expect(cancelled).toBe(true);
+    expect(deps.requestChallenge).not.toHaveBeenCalled();
+    expect(deps.sendOtp).not.toHaveBeenCalled();
   });
 
   it('answers preflight with the same exact-origin no-store headers', async () => {

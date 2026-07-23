@@ -34,7 +34,9 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
     if (!canSubmit || !normalizedPhone) return;
 
     setPending(true);
+    setRequested(false);
     setError(null);
+    window.sessionStorage.removeItem(SESSION_KEY);
     try {
       const result = await requestSms({
         phone: normalizedPhone,
@@ -93,22 +95,24 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
             />
             我已年满18周岁
           </label>
-          <label className="consent-row">
+          <div className="consent-row">
             <input
               type="checkbox"
+              aria-label="我已阅读并同意隐私说明"
               checked={privacyAccepted}
               onChange={(event) => setPrivacyAccepted(event.target.checked)}
             />
-            我同意隐私说明
-          </label>
-          <label className="consent-row">
+            <span>我已阅读并同意<a href="/privacy">隐私说明</a></span>
+          </div>
+          <div className="consent-row">
             <input
               type="checkbox"
+              aria-label="我已阅读服务边界"
               checked={boundaryAccepted}
               onChange={(event) => setBoundaryAccepted(event.target.checked)}
             />
-            我已阅读服务边界
-          </label>
+            <span>我已阅读<a href="/service-boundary">服务边界</a></span>
+          </div>
           <button className="primary-action" type="submit" disabled={!canSubmit}>
             {pending ? '正在发送…' : '发送验证码'}
           </button>
@@ -125,7 +129,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
           <p>Supabase 负责身份验证和数据库。</p>
           <p>当前尚未配置生产短信供应商或第三方监控服务；真实短信仍是部署前置条件。</p>
           <p className="boundary-note">本服务不是急救或危机热线</p>
-          <p><a href="/privacy">隐私说明</a> · <a href="/content-correction">内容纠错</a></p>
+          <p><a href="/content-correction">内容纠错</a></p>
         </div>
       </section>
     </main>

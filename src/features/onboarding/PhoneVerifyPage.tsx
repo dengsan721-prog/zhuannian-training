@@ -37,7 +37,7 @@ export function PhoneVerifyPage({
   const [token, setToken] = useState('');
   const [pending, setPending] = useState(false);
   const [joined, setJoined] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<'verification_failed' | 'enrollment_failed' | null>(null);
 
   if (!canonicalPhone || !activeRequestId) {
     return (
@@ -62,8 +62,12 @@ export function PhoneVerifyPage({
       await verifyEnrollment({ phone: verifiedPhone, token, requestId: verifiedRequestId });
       window.sessionStorage.removeItem(SESSION_KEY);
       setJoined(true);
-    } catch {
-      setError('验证码无效或已过期，请重试');
+    } catch (caught) {
+      setError(
+        caught instanceof Error && caught.message === 'enrollment_failed'
+          ? 'enrollment_failed'
+          : 'verification_failed',
+      );
     } finally {
       setPending(false);
     }
@@ -98,10 +102,16 @@ export function PhoneVerifyPage({
             />
           </label>
           <button className="primary-action" type="submit" disabled={!/^\d{6}$/.test(token) || pending}>
-            {pending ? '正在验证…' : '完成入班'}
+            {pending ? '正在验证…' : error === 'enrollment_failed' ? '重试入班' : '完成入班'}
           </button>
         </form>
-        {error && <p role="alert" className="error-note">{error}</p>}
+        {error && (
+          <p role="alert" className="error-note">
+            {error === 'enrollment_failed'
+              ? '手机号已验证，入班暂未完成，请重试'
+              : '验证码无效或已过期，请重试'}
+          </p>
+        )}
       </section>
     </main>
   );

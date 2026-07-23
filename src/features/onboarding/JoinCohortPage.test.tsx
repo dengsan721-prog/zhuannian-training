@@ -22,7 +22,7 @@ describe('JoinCohortPage', () => {
     await userEvent.type(screen.getByLabelText('班级码'), 'ABC123');
     await userEvent.type(screen.getByLabelText('手机号'), '13800138000');
     await userEvent.click(screen.getByLabelText('我已年满18周岁'));
-    await userEvent.click(screen.getByLabelText('我同意隐私说明'));
+    await userEvent.click(screen.getByLabelText('我已阅读并同意隐私说明'));
     await userEvent.click(screen.getByLabelText('我已阅读服务边界'));
     await userEvent.click(screen.getByRole('button', { name: '发送验证码' }));
     expect(requestSms).toHaveBeenCalledWith({
@@ -35,12 +35,30 @@ describe('JoinCohortPage', () => {
     render(<JoinCohortPage requestSms={vi.fn()} />);
 
     expect(screen.getByLabelText('我已年满18周岁')).not.toBeChecked();
-    expect(screen.getByLabelText('我同意隐私说明')).not.toBeChecked();
+    expect(screen.getByLabelText('我已阅读并同意隐私说明')).not.toBeChecked();
     expect(screen.getByLabelText('我已阅读服务边界')).not.toBeChecked();
     expect(screen.getByText(/Supabase 负责身份验证和数据库/)).toBeInTheDocument();
     expect(screen.getByText(/尚未配置生产短信供应商或第三方监控服务/)).toBeInTheDocument();
     expect(screen.getByText('本服务不是急救或危机热线')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '内容纠错' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '隐私说明' })).toHaveAttribute('href', '/privacy');
+    expect(screen.getByRole('link', { name: '服务边界' })).toHaveAttribute('href', '/service-boundary');
+  });
+
+  it('does not turn consent on when a user opens an information link', async () => {
+    render(<JoinCohortPage requestSms={vi.fn()} />);
+    const privacyConsent = screen.getByLabelText('我已阅读并同意隐私说明');
+    const boundaryConsent = screen.getByLabelText('我已阅读服务边界');
+    const privacyLink = screen.getByRole('link', { name: '隐私说明' });
+    const boundaryLink = screen.getByRole('link', { name: '服务边界' });
+    privacyLink.addEventListener('click', (event) => event.preventDefault());
+    boundaryLink.addEventListener('click', (event) => event.preventDefault());
+
+    await userEvent.click(privacyLink);
+    await userEvent.click(boundaryLink);
+
+    expect(privacyConsent).not.toBeChecked();
+    expect(boundaryConsent).not.toBeChecked();
   });
 
   it('keeps submission disabled for a malformed phone', async () => {
@@ -48,7 +66,7 @@ describe('JoinCohortPage', () => {
     await userEvent.type(screen.getByLabelText('班级码'), 'ABC123');
     await userEvent.type(screen.getByLabelText('手机号'), '12800138000');
     await userEvent.click(screen.getByLabelText('我已年满18周岁'));
-    await userEvent.click(screen.getByLabelText('我同意隐私说明'));
+    await userEvent.click(screen.getByLabelText('我已阅读并同意隐私说明'));
     await userEvent.click(screen.getByLabelText('我已阅读服务边界'));
 
     expect(screen.getByRole('button', { name: '发送验证码' })).toBeDisabled();
@@ -60,7 +78,7 @@ describe('JoinCohortPage', () => {
     await userEvent.type(screen.getByLabelText('班级码'), 'ABC123');
     await userEvent.type(screen.getByLabelText('手机号'), '+86 138 0013 8000');
     await userEvent.click(screen.getByLabelText('我已年满18周岁'));
-    await userEvent.click(screen.getByLabelText('我同意隐私说明'));
+    await userEvent.click(screen.getByLabelText('我已阅读并同意隐私说明'));
     await userEvent.click(screen.getByLabelText('我已阅读服务边界'));
     await userEvent.click(screen.getByRole('button', { name: '发送验证码' }));
 
@@ -77,10 +95,30 @@ describe('JoinCohortPage', () => {
     await userEvent.type(screen.getByLabelText('班级码'), 'ABC123');
     await userEvent.type(screen.getByLabelText('手机号'), '13800138000');
     await userEvent.click(screen.getByLabelText('我已年满18周岁'));
-    await userEvent.click(screen.getByLabelText('我同意隐私说明'));
+    await userEvent.click(screen.getByLabelText('我已阅读并同意隐私说明'));
     await userEvent.click(screen.getByLabelText('我已阅读服务边界'));
     await userEvent.click(screen.getByRole('button', { name: '发送验证码' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('邀请已失效，请联系教练重新获取');
+  });
+
+  it('clears an old request and link before a new OTP request that fails', async () => {
+    const requestSms = vi.fn()
+      .mockResolvedValueOnce({ accepted: true, requestId: 'request-old', retryAfterSeconds: 60 })
+      .mockRejectedValueOnce(new Error('request_failed'));
+    render(<JoinCohortPage requestSms={requestSms} />);
+    await userEvent.type(screen.getByLabelText('班级码'), 'ABC123');
+    await userEvent.type(screen.getByLabelText('手机号'), '13800138000');
+    await userEvent.click(screen.getByLabelText('我已年满18周岁'));
+    await userEvent.click(screen.getByLabelText('我已阅读并同意隐私说明'));
+    await userEvent.click(screen.getByLabelText('我已阅读服务边界'));
+    await userEvent.click(screen.getByRole('button', { name: '发送验证码' }));
+    expect(await screen.findByRole('link', { name: '输入验证码' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '发送验证码' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('验证码暂时无法发送，请稍后重试');
+    expect(screen.queryByRole('link', { name: '输入验证码' })).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem('zhuannian:onboarding')).toBeNull();
   });
 });

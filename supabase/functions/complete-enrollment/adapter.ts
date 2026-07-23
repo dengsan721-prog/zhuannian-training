@@ -13,7 +13,13 @@ interface ClientFactory {
 interface CallerClient {
   auth: {
     getUser(token: string): Promise<{
-      data: { user: { id: string; phone?: string | null } | null };
+      data: {
+        user: {
+          id: string;
+          phone?: string | null;
+          phone_confirmed_at?: string | null;
+        } | null;
+      };
       error: unknown;
     }>;
   };
@@ -45,7 +51,7 @@ export function createCompleteEnrollmentAdapter(
       }) as CallerClient;
       const { data: { user }, error } = await caller.auth.getUser(token);
       const phone = user?.phone ? normalizeChineseMobile(user.phone) : null;
-      if (error || !user || !phone) return null;
+      if (error || !user || !phone || !user.phone_confirmed_at) return null;
       return { userId: user.id, phone };
     },
     async complete({ requestId, userId, phone }) {

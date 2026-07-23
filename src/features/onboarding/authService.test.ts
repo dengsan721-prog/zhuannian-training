@@ -88,6 +88,17 @@ describe('verifyAndJoin', () => {
             phone: '+8613900139000',
             phone_confirmed_at: '2026-07-22T00:00:00Z',
           },
+          access_token: 'different-phone-token',
+        },
+      },
+      error: null,
+    });
+    supabase.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          id: 'user-2',
+          phone: '+8613900139000',
+          phone_confirmed_at: '2026-07-22T00:00:00Z',
         },
       },
       error: null,
@@ -107,7 +118,67 @@ describe('verifyAndJoin', () => {
     });
   });
 
-  it('does not trust a matching local session when server user validation fails', async () => {
+  it('consumes OTP when the candidate session phone is explicitly unconfirmed', async () => {
+    const supabase = client();
+    supabase.auth.getSession.mockResolvedValue({
+      data: {
+        session: {
+          user: { id: 'user-1', phone: '+8613800138000' },
+          access_token: 'unconfirmed-token',
+        },
+      },
+      error: null,
+    });
+    supabase.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          id: 'user-1',
+          phone: '+8613800138000',
+          phone_confirmed_at: null,
+        },
+      },
+      error: null,
+    });
+    vi.mocked(getSupabaseClient).mockReturnValue(supabase as never);
+
+    await verifyAndJoin({
+      phone: '+8613800138000',
+      token: '123456',
+      requestId: 'request-1',
+    });
+
+    expect(supabase.auth.verifyOtp).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not consume OTP again when candidate-session validation has a network failure', async () => {
+    const supabase = client();
+    supabase.auth.getSession.mockResolvedValue({
+      data: {
+        session: {
+          user: {
+            id: 'user-1',
+            phone: '+8613800138000',
+            phone_confirmed_at: '2026-07-22T00:00:00Z',
+          },
+          access_token: 'candidate-token',
+        },
+      },
+      error: null,
+    });
+    supabase.auth.getUser.mockRejectedValue(new Error('network unavailable'));
+    vi.mocked(getSupabaseClient).mockReturnValue(supabase as never);
+
+    await expect(verifyAndJoin({
+      phone: '+8613800138000',
+      token: '123456',
+      requestId: 'request-1',
+    })).rejects.toThrow('enrollment_failed');
+
+    expect(supabase.auth.verifyOtp).not.toHaveBeenCalled();
+    expect(supabase.functions.invoke).not.toHaveBeenCalled();
+  });
+
+  it('does not consume OTP again when candidate-session validation returns an error', async () => {
     const supabase = client();
     supabase.auth.getSession.mockResolvedValue({
       data: {
@@ -128,14 +199,15 @@ describe('verifyAndJoin', () => {
     });
     vi.mocked(getSupabaseClient).mockReturnValue(supabase as never);
 
-    await verifyAndJoin({
+    await expect(verifyAndJoin({
       phone: '+8613800138000',
       token: '123456',
       requestId: 'request-1',
-    });
+    })).rejects.toThrow('enrollment_failed');
 
     expect(supabase.auth.getUser).toHaveBeenCalledWith('tampered-local-token');
-    expect(supabase.auth.verifyOtp).toHaveBeenCalledTimes(1);
+    expect(supabase.auth.verifyOtp).not.toHaveBeenCalled();
+    expect(supabase.functions.invoke).not.toHaveBeenCalled();
   });
 
   it('maps completion errors to enrollment_failed after phone verification', async () => {

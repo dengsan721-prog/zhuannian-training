@@ -1,6 +1,6 @@
 create extension if not exists dblink with schema extensions;
 
-select plan(10);
+select plan(12);
 
 insert into auth.users(id, aud, role, email, created_at, updated_at) values
   ('00000000-0000-4000-8000-000000000200','authenticated','authenticated','concurrency-coach@example.invalid',now(),now()),
@@ -247,6 +247,72 @@ select ok(
   'expiry is re-evaluated with clock time refreshed after the advisory wait'
 );
 
+insert into public.cohort_invites(id, cohort_id, code_hash, expires_at, max_uses, use_count)
+values (
+  '22000000-0000-4000-8000-000000000004',
+  '21000000-0000-4000-8000-000000000001',
+  'rotation-old-hash',
+  clock_timestamp() + interval '1 hour',
+  5,
+  0
+);
+select extensions.dblink_exec('enrollment_lock', 'begin');
+select *
+from extensions.dblink(
+  'enrollment_lock',
+  $$select 1 from (
+    select pg_advisory_xact_lock(hashtextextended(
+      'enrollment-phone:rotation-phone', 0
+    ))
+  ) held$$
+) as rotation_lock_result(acquired integer);
+select extensions.dblink_send_query(
+  'enrollment_worker_a',
+  $$select decision, request_id, delivery_attempt_id, should_send, retry_after_seconds
+    from public.request_enrollment_challenge(
+      'rotation-old-hash', 'rotation-phone', true, '2026-07-22', '2026-07-22'
+    )$$
+);
+select pg_sleep(0.25);
+select is(
+  extensions.dblink_is_busy('enrollment_worker_a'),
+  1,
+  'request waits on the phone lock before the invite hash rotates'
+);
+update public.cohort_invites
+set code_hash = 'rotation-new-hash'
+where id = '22000000-0000-4000-8000-000000000004';
+select extensions.dblink_exec('enrollment_lock', 'commit');
+create temporary table rotation_result as
+select *
+from extensions.dblink_get_result('enrollment_worker_a') as result(
+  decision text,
+  request_id uuid,
+  delivery_attempt_id uuid,
+  should_send boolean,
+  retry_after_seconds integer
+);
+select count(*)
+from extensions.dblink_get_result('enrollment_worker_a') as result(
+  decision text,
+  request_id uuid,
+  delivery_attempt_id uuid,
+  should_send boolean,
+  retry_after_seconds integer
+);
+select ok(
+  (select decision = 'invalid_invite' and request_id is null
+     and delivery_attempt_id is null and should_send is false
+   from rotation_result)
+  and
+  (select count(*) = 0 from public.enrollment_challenges
+   where phone_hmac = 'rotation-phone')
+  and
+  (select count(*) = 0 from public.enrollment_sms_delivery_attempts
+   where phone_hmac = 'rotation-phone'),
+  'a hash rotated during the advisory wait invalidates the old code'
+);
+
 select extensions.dblink_disconnect('enrollment_lock');
 select extensions.dblink_disconnect('enrollment_worker_a');
 select extensions.dblink_disconnect('enrollment_worker_b');
@@ -255,16 +321,19 @@ delete from public.consent_events where user_id = '00000000-0000-4000-8000-00000
 delete from public.cohort_memberships where user_id = '00000000-0000-4000-8000-000000000201';
 delete from public.enrollment_sms_delivery_attempts where phone_hmac in (
   'concurrent-global-phone',
-  'cross-expiry-phone'
+  'cross-expiry-phone',
+  'rotation-phone'
 );
 delete from public.enrollment_challenges where phone_hmac in (
   'concurrent-global-phone',
-  'cross-expiry-phone'
+  'cross-expiry-phone',
+  'rotation-phone'
 );
 delete from public.cohort_invites where id in (
   '22000000-0000-4000-8000-000000000001',
   '22000000-0000-4000-8000-000000000002',
-  '22000000-0000-4000-8000-000000000003'
+  '22000000-0000-4000-8000-000000000003',
+  '22000000-0000-4000-8000-000000000004'
 );
 delete from public.cohorts where id in (
   '21000000-0000-4000-8000-000000000001',

@@ -12,6 +12,7 @@ interface RpcBuilder {
 
 interface AuthErrorLike {
   code?: unknown;
+  status?: unknown;
 }
 
 interface AdminClient {
@@ -168,7 +169,13 @@ export function createRequestInviteOtpAdapter(
           options: { shouldCreateUser: false },
         });
         if (!result.error) return { status: 'sent' };
-        return { status: options.isAuthApiError(result.error) ? 'failed' : 'unknown' };
+        const isExplicitClientRejection = (
+          options.isAuthApiError(result.error)
+          && typeof result.error.status === 'number'
+          && result.error.status >= 400
+          && result.error.status < 500
+        );
+        return { status: isExplicitClientRejection ? 'failed' : 'unknown' };
       } catch {
         return { status: 'unknown' };
       }

@@ -18,7 +18,13 @@ describe('complete-enrollment adapter', () => {
     const caller = {
       auth: {
         getUser: vi.fn().mockResolvedValue({
-          data: { user: { id: 'user-1', phone: '+86 138 0013 8000' } },
+          data: {
+            user: {
+              id: 'user-1',
+              phone: '+86 138 0013 8000',
+              phone_confirmed_at: '2026-07-22T00:00:00Z',
+            },
+          },
           error: null,
         }),
       },
@@ -74,6 +80,29 @@ describe('complete-enrollment adapter', () => {
     const built = createCompleteEnrollmentAdapter({ config, createClient, hmacSha256 });
 
     await expect(built.authenticate('Bearer verified-jwt')).resolves.toBeNull();
+    expect(hmacSha256).not.toHaveBeenCalled();
+  });
+
+  it('rejects a user whose phone exists but is not confirmed', async () => {
+    const caller = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: {
+            user: {
+              id: 'user-1',
+              phone: '+8613800138000',
+              phone_confirmed_at: null,
+            },
+          },
+          error: null,
+        }),
+      },
+    };
+    const createClient = vi.fn().mockReturnValue(caller);
+    const hmacSha256 = vi.fn();
+    const built = createCompleteEnrollmentAdapter({ config, createClient, hmacSha256 });
+
+    await expect(built.authenticate('Bearer unconfirmed-jwt')).resolves.toBeNull();
     expect(hmacSha256).not.toHaveBeenCalled();
   });
 });

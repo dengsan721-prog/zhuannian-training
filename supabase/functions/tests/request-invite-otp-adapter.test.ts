@@ -165,6 +165,54 @@ describe('request-invite-otp adapter', () => {
     expect(sdk.auth.auth.signInWithOtp).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['5xx Auth API error', { isAuthApiError: true, code: 'sms_send_failed', status: 500 }],
+    ['Auth API error without status', { isAuthApiError: true, code: 'request_timeout' }],
+  ])('keeps an OTP result unknown for a %s', async (_label, error) => {
+    const sdk = adapter();
+    sdk.admin.auth.admin.createUser.mockResolvedValue({
+      data: { user: null },
+      error: { isAuthApiError: true, code: 'phone_exists' },
+    });
+    sdk.auth.auth.signInWithOtp.mockResolvedValue({ data: {}, error });
+
+    await expect(sdk.built.sendOtp({
+      phone: '+8613800138000',
+      requestId: 'request-1',
+    })).resolves.toEqual({ status: 'unknown' });
+  });
+
+  it('records only an explicit 4xx Auth API OTP rejection as failed', async () => {
+    const sdk = adapter();
+    sdk.admin.auth.admin.createUser.mockResolvedValue({
+      data: { user: null },
+      error: { isAuthApiError: true, code: 'phone_exists' },
+    });
+    sdk.auth.auth.signInWithOtp.mockResolvedValue({
+      data: {},
+      error: { isAuthApiError: true, code: 'over_sms_send_rate_limit', status: 429 },
+    });
+
+    await expect(sdk.built.sendOtp({
+      phone: '+8613800138000',
+      requestId: 'request-1',
+    })).resolves.toEqual({ status: 'failed' });
+  });
+
+  it('keeps a thrown OTP transport result unknown', async () => {
+    const sdk = adapter();
+    sdk.admin.auth.admin.createUser.mockResolvedValue({
+      data: { user: null },
+      error: { isAuthApiError: true, code: 'phone_exists' },
+    });
+    sdk.auth.auth.signInWithOtp.mockRejectedValue(new Error('connection reset after write'));
+
+    await expect(sdk.built.sendOtp({
+      phone: '+8613800138000',
+      requestId: 'request-1',
+    })).resolves.toEqual({ status: 'unknown' });
+  });
+
   it('finalizes the exact attempt through the service-only RPC', async () => {
     const sdk = adapter();
     sdk.admin.rpc.mockReturnValue(rpcResult({

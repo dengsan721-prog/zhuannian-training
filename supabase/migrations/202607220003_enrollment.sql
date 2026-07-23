@@ -118,6 +118,7 @@ begin
   select * into selected_invite
   from public.cohort_invites
   where id = selected_invite.id
+    and code_hash = p_invite_hash
   for update;
   if not found then
     decision := 'invalid_invite';
@@ -308,7 +309,13 @@ declare
   selected_challenge public.enrollment_challenges%rowtype;
   v_now timestamptz;
 begin
-  if p_status is null or p_status not in ('sent', 'failed') then
+  if p_delivery_attempt_id is null or p_request_id is null then
+    raise exception 'invalid_request';
+  end if;
+  if p_status is null
+    or btrim(p_status) = ''
+    or p_status not in ('sent', 'failed')
+  then
     raise exception 'invalid_delivery_status';
   end if;
 
@@ -326,12 +333,12 @@ begin
   from public.enrollment_sms_delivery_attempts
   where id = p_delivery_attempt_id
   for update;
-  if not found or selected_attempt.challenge_id <> p_request_id then
+  if not found or selected_attempt.challenge_id is distinct from p_request_id then
     raise exception 'delivery_attempt_mismatch';
   end if;
 
   if selected_attempt.status <> 'pending' then
-    if selected_attempt.status <> p_status then
+    if selected_attempt.status is distinct from p_status then
       raise exception 'delivery_status_conflict';
     end if;
     delivery_status := selected_attempt.status;
@@ -409,6 +416,13 @@ as $$
 declare
   selected_challenge public.enrollment_challenges%rowtype;
 begin
+  if p_request_id is null
+    or p_user_id is null
+    or coalesce(char_length(p_phone_hmac), 0) = 0
+  then
+    raise exception 'invalid_request';
+  end if;
+
   select * into selected_challenge
   from public.enrollment_challenges
   where id = p_request_id;
@@ -424,13 +438,13 @@ begin
   where id = p_request_id
   for update;
   if not found then raise exception 'enrollment_challenge_not_found'; end if;
-  if selected_challenge.phone_hmac <> p_phone_hmac
+  if selected_challenge.phone_hmac is distinct from p_phone_hmac
     or selected_challenge.used_at is not null
   then
     raise exception 'enrollment_challenge_mismatch';
   end if;
   if selected_challenge.user_id is not null
-    and selected_challenge.user_id <> p_user_id
+    and selected_challenge.user_id is distinct from p_user_id
   then
     raise exception 'enrollment_challenge_user_mismatch';
   end if;
@@ -465,6 +479,13 @@ declare
   membership_exists boolean;
   v_now timestamptz;
 begin
+  if p_request_id is null
+    or p_user_id is null
+    or coalesce(char_length(p_phone_hmac), 0) = 0
+  then
+    raise exception 'invalid_request';
+  end if;
+
   select * into selected_challenge
   from public.enrollment_challenges
   where id = p_request_id;
@@ -481,17 +502,23 @@ begin
   for update;
   if not found then raise exception 'enrollment_challenge_not_found'; end if;
 
-  if selected_challenge.phone_hmac <> p_phone_hmac
+  if selected_challenge.phone_hmac is distinct from p_phone_hmac
     or selected_challenge.adult_attested is not true
-    or selected_challenge.privacy_consent_version <> '2026-07-22'
-    or selected_challenge.service_boundary_version <> '2026-07-22'
+    or selected_challenge.privacy_consent_version is distinct from '2026-07-22'
+    or selected_challenge.service_boundary_version is distinct from '2026-07-22'
   then
     raise exception 'enrollment_challenge_mismatch';
   end if;
-  if selected_challenge.user_id is not null
-    and selected_challenge.user_id <> p_user_id
+  if selected_challenge.used_at is not null then
+    if selected_challenge.user_id is null
+      or selected_challenge.user_id is distinct from p_user_id
+    then
+      raise exception 'enrollment_challenge_user_mismatch';
+    end if;
+  elsif selected_challenge.user_id is not null
+    and selected_challenge.user_id is distinct from p_user_id
   then
-    raise exception 'enrollment_challenge_user_mismatch';
+      raise exception 'enrollment_challenge_user_mismatch';
   end if;
   if selected_challenge.last_sent_at is null then
     raise exception 'enrollment_challenge_not_sent';
@@ -519,6 +546,15 @@ begin
   end if;
 
   if selected_challenge.used_at is not null then
+    perform 1
+    from public.cohort_memberships m
+    where m.cohort_id = selected_invite.cohort_id
+      and m.user_id = p_user_id
+    for update;
+    if not found then
+      raise exception 'enrollment_membership_missing';
+    end if;
+
     cohort_id := selected_invite.cohort_id;
     return next;
     return;

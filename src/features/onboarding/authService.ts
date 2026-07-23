@@ -28,25 +28,31 @@ export async function requestInviteOtp(input: RequestInviteOtpInput): Promise<Re
 export async function verifyAndJoin(input: VerifyAndJoinInput): Promise<{ cohortId: string }> {
   const supabase = getSupabaseClient();
   let accessToken: string | null = null;
+  let candidateToken: string | null = null;
 
   try {
     const { data, error } = await supabase.auth.getSession();
-    const candidateToken = !error ? data.session?.access_token : null;
-    if (candidateToken) {
+    candidateToken = !error ? (data.session?.access_token ?? null) : null;
+  } catch {
+    // A missing local session is expected on the first verification attempt.
+  }
+
+  if (candidateToken) {
+    try {
       const verified = await supabase.auth.getUser(candidateToken);
+      if (verified.error) throw new Error('enrollment_failed');
       const verifiedPhone = verified.data.user?.phone
         ? normalizeChineseMobile(verified.data.user.phone)
         : null;
       if (
-        !verified.error
-        && verifiedPhone === input.phone
+        verifiedPhone === input.phone
         && verified.data.user?.phone_confirmed_at
       ) {
         accessToken = candidateToken;
       }
+    } catch {
+      throw new Error('enrollment_failed');
     }
-  } catch {
-    // A missing local session is expected on the first verification attempt.
   }
 
   if (!accessToken) {

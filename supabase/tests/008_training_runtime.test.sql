@@ -1,6 +1,6 @@
 create extension if not exists dblink with schema extensions;
 
-select plan(75);
+select plan(91);
 
 select has_column(
   'public',
@@ -61,11 +61,50 @@ select ok(
   'anonymous users cannot execute check_training_session'
 );
 select ok(
-  not has_table_privilege('authenticated', 'public.training_sessions', 'insert')
-  and not has_table_privilege('authenticated', 'public.training_sessions', 'update')
-  and not has_table_privilege('authenticated', 'public.training_sessions', 'delete'),
-  'authenticated users retain no direct training session mutation privileges'
+  has_table_privilege('authenticated', 'public.training_sessions', 'select'),
+  'authenticated users retain training session SELECT through owner RLS'
 );
+select ok(
+  not has_table_privilege(
+    'authenticated',
+    'public.training_sessions',
+    privilege_name
+  ),
+  format('authenticated users have no training session %s privilege', privilege_name)
+)
+from (
+  values
+    ('insert'),
+    ('update'),
+    ('delete'),
+    ('truncate'),
+    ('references'),
+    ('trigger'),
+    ('maintain')
+) denied_authenticated(privilege_name);
+select ok(
+  not has_table_privilege('anon', 'public.training_sessions', privilege_name),
+  format('anonymous users have no training session %s privilege', privilege_name)
+)
+from (
+  values
+    ('select'),
+    ('insert'),
+    ('update'),
+    ('delete'),
+    ('truncate'),
+    ('references'),
+    ('trigger'),
+    ('maintain')
+) denied_anonymous(privilege_name);
+set role authenticated;
+select throws_ok(
+  $$truncate table public.training_sessions cascade$$,
+  '42501',
+  null,
+  'authenticated users cannot truncate training sessions through RLS'
+);
+reset role;
 select ok(
   (
     select bool_and(

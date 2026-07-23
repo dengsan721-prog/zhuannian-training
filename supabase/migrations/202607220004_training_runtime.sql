@@ -261,4 +261,5 @@ revoke all on function public.check_training_session(uuid) from public, anon, au
 grant execute on function public.start_training(uuid, uuid) to authenticated;
 grant execute on function public.check_training_session(uuid) to authenticated;
 
-revoke insert, update, delete on public.training_sessions from authenticated;
+revoke all on table public.training_sessions from public, anon, authenticated;
+grant select on table public.training_sessions to authenticated;

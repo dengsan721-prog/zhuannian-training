@@ -7,10 +7,10 @@ import {
   PrivacyNoticePage,
   ServiceBoundaryPage,
 } from '../features/onboarding/ServiceInformationPages';
+import { SceneHomePage } from '../features/scenes/SceneHomePage';
 import { App } from './App';
 
 const routes = [
-  '/scenes',
   '/train/:sceneSlug',
   '/training/:sessionId/:step',
   '/reviews/:completionId',
@@ -32,6 +32,7 @@ export function AppRouter() {
       <Route path="/privacy" element={<PrivacyNoticePage />} />
       <Route path="/service-boundary" element={<ServiceBoundaryPage />} />
       <Route path="/content-correction" element={<ContentCorrectionPage />} />
+      <Route path="/scenes" element={<SceneHomePage />} />
       {routes.map((path) => <Route key={path} path={path} element={<App />} />)}
     </Routes>
   );

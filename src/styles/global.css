@@ -16,6 +16,21 @@ button, [role="button"], input[type="radio"], input[type="checkbox"] { min-width
 .service-disclosure { display: grid; gap: var(--space-2); color: var(--color-muted); font-size: 0.925rem; }
 .primary-action { display: inline-grid; min-height: var(--touch-target); place-items: center; border: 0; border-radius: 10px; padding: var(--space-2) var(--space-4); color: #fff; background: var(--color-accent); font-weight: 600; text-align: center; text-decoration: none; }
 .primary-action:disabled { cursor: not-allowed; opacity: 0.5; }
+.scene-home { display: grid; gap: var(--space-3); }
+.scene-home > h1, .scene-home > p, .catalog-message p { margin-block: 0; }
+.scene-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.scene-filters label { display: grid; gap: var(--space-1); color: var(--color-muted); font-size: 0.875rem; }
+.scene-filters select { width: 100%; min-height: var(--touch-target); border: 1px solid var(--color-border); border-radius: 10px; padding-inline: var(--space-2); color: var(--color-text); background: var(--color-surface); }
+.scene-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.scene-card { display: grid; gap: var(--space-1); border: 1px solid var(--color-border); border-radius: 12px; padding: var(--space-3); }
+.scene-card h2, .scene-card p { margin: 0; }
+.scene-card h2 { font-size: 1.05rem; line-height: 1.35; }
+.scene-card h2 a { display: inline-flex; min-height: var(--touch-target); align-items: center; color: var(--color-text); text-underline-offset: 3px; }
+.scene-card > p:last-child { color: var(--color-muted); font-size: 0.925rem; }
+.scene-meta { color: var(--color-accent); font-size: 0.8rem; font-weight: 600; }
+.catalog-message { display: grid; gap: var(--space-2); }
+.secondary-action { min-height: var(--touch-target); border: 1px solid var(--color-border); border-radius: 10px; padding: var(--space-2) var(--space-3); color: var(--color-text); background: var(--color-surface); font-weight: 600; }
+.catalog-more { width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

@@ -30,10 +30,13 @@ function fakeClient(result: QueryResult) {
 
 const joinedRow = {
   id: '30000000-0000-0000-0000-000000000001',
+  version: validScene.version,
   status: 'published',
+  risk: validScene.riskLevel,
   payload: validScene,
   scenes: {
     id: '20000000-0000-0000-0000-000000000001',
+    scene_code: validScene.sceneCode,
     slug: validScene.slug,
     relationship: validScene.relationship,
     category: validScene.category,
@@ -49,7 +52,7 @@ describe('SupabaseSceneRepository', () => {
 
     expect(fake.from).toHaveBeenCalledWith('scene_versions');
     expect(fake.select).toHaveBeenCalledWith(
-      'id,status,payload,scenes!inner(id,slug,relationship,category)',
+      'id,version,status,risk,payload,scenes!inner(id,scene_code,slug,relationship,category)',
     );
     expect(fake.query.eq).toHaveBeenCalledWith('status', 'published');
     expect(scenes).toEqual([{
@@ -115,6 +118,36 @@ describe('SupabaseSceneRepository', () => {
     await expect(
       new SupabaseSceneRepository(mismatchedClient.client).listPublished(),
     ).rejects.toThrow(/scene relation/i);
+  });
+
+  it.each([
+    [
+      'sceneCode',
+      {
+        ...joinedRow,
+        scenes: { ...joinedRow.scenes, scene_code: 'PC-999' },
+      },
+    ],
+    ['version', { ...joinedRow, version: validScene.version + 1 }],
+    ['riskLevel', { ...joinedRow, risk: 'caution' }],
+  ])('rejects a %s mismatch between governed metadata and payload', async (_field, row) => {
+    const fake = fakeClient({ data: [row], error: null });
+
+    await expect(
+      new SupabaseSceneRepository(fake.client).listPublished(),
+    ).rejects.toThrow(/does not match payload/i);
+  });
+
+  it.each([
+    ['empty row id', { ...joinedRow, id: '' }],
+    ['non-integer row version', { ...joinedRow, version: 1.5 }],
+    ['unknown row risk', { ...joinedRow, risk: 'unknown' }],
+  ])('rejects an invalid published row: %s', async (_case, row) => {
+    const fake = fakeClient({ data: [row], error: null });
+
+    await expect(
+      new SupabaseSceneRepository(fake.client).listPublished(),
+    ).rejects.toThrow(/invalid published scene row/i);
   });
 
   it('returns null when a published slug has no row', async () => {

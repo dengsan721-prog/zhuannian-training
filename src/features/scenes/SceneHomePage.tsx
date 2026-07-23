@@ -3,9 +3,17 @@ import type { SceneRepository } from '../../lib/repositories/SceneRepository';
 import { SceneList } from './SceneList';
 import { useScenes } from './useScenes';
 
+const sceneListId = 'classic-scene-list';
+
 type SceneHomePageProps = {
   sceneRepository?: SceneRepository;
 };
+
+function compareText(left: string, right: string) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
 
 export function SceneHomePage({ sceneRepository }: SceneHomePageProps) {
   const { state, retry } = useScenes(sceneRepository);
@@ -14,12 +22,17 @@ export function SceneHomePage({ sceneRepository }: SceneHomePageProps) {
   const [showAll, setShowAll] = useState(false);
 
   const scenes = state.status === 'success' ? state.scenes : [];
+  const sortedScenes = [...scenes].sort((left, right) => (
+    compareText(left.sceneCode, right.sceneCode)
+    || left.version - right.version
+    || compareText(left.id, right.id)
+  ));
   const categories = [...new Set(
-    scenes
+    sortedScenes
       .filter((scene) => !relationship || scene.relationship === relationship)
       .map((scene) => scene.category),
   )];
-  const matchingScenes = scenes.filter((scene) => (
+  const matchingScenes = sortedScenes.filter((scene) => (
     (!relationship || scene.relationship === relationship)
     && (!category || scene.category === category)
   ));
@@ -89,14 +102,16 @@ export function SceneHomePage({ sceneRepository }: SceneHomePageProps) {
             )}
             {matchingScenes.length > 0 && (
               <>
-                <SceneList scenes={visibleScenes} />
-                {!showAll && matchingScenes.length > 3 && (
+                <SceneList id={sceneListId} scenes={visibleScenes} />
+                {matchingScenes.length > 3 && (
                   <button
                     type="button"
                     className="secondary-action catalog-more"
-                    onClick={() => setShowAll(true)}
+                    aria-expanded={showAll}
+                    aria-controls={sceneListId}
+                    onClick={() => setShowAll((current) => !current)}
                   >
-                    查看全部经典场景
+                    {showAll ? '收起经典场景' : '查看全部经典场景'}
                   </button>
                 )}
               </>

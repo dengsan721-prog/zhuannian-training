@@ -1,32 +1,45 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { PublishedSceneVersion } from '../../domain/scenes/types';
+import type { PublishedSceneVersion, RiskLevel } from '../../domain/scenes/types';
 import { validateScene } from '../../domain/scenes/validateScene';
 import type { SceneRepository } from './SceneRepository';
 
-const sceneSelection = 'id,status,payload,scenes!inner(id,slug,relationship,category)';
+const sceneSelection = 'id,version,status,risk,payload,scenes!inner(id,scene_code,slug,relationship,category)';
 
 type SceneRelation = {
   id: string;
+  sceneCode: string;
   slug: string;
   relationship: string;
   category: string;
 };
 
+const riskLevels = new Set<RiskLevel>(['standard', 'caution', 'stop']);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function isRiskLevel(value: unknown): value is RiskLevel {
+  return typeof value === 'string' && riskLevels.has(value as RiskLevel);
+}
+
 function readSceneRelation(value: unknown): SceneRelation {
   if (!isRecord(value)
-    || typeof value.id !== 'string' || value.id.trim() === ''
-    || typeof value.slug !== 'string' || value.slug.trim() === ''
-    || typeof value.relationship !== 'string' || value.relationship.trim() === ''
-    || typeof value.category !== 'string' || value.category.trim() === '') {
+    || !isNonEmptyString(value.id)
+    || !isNonEmptyString(value.scene_code)
+    || !isNonEmptyString(value.slug)
+    || !isNonEmptyString(value.relationship)
+    || !isNonEmptyString(value.category)) {
     throw new Error('invalid scene relation');
   }
 
   return {
     id: value.id,
+    sceneCode: value.scene_code,
     slug: value.slug,
     relationship: value.relationship,
     category: value.category,
@@ -72,17 +85,24 @@ export class SupabaseSceneRepository implements SceneRepository {
 
   private toPublished(value: unknown): PublishedSceneVersion {
     if (!isRecord(value)
-      || typeof value.id !== 'string'
+      || !isNonEmptyString(value.id)
+      || typeof value.version !== 'number'
+      || !Number.isInteger(value.version)
+      || value.version < 1
       || value.status !== 'published'
+      || !isRiskLevel(value.risk)
       || !Object.hasOwn(value, 'payload')) {
       throw new Error('invalid published scene row');
     }
 
     const relation = readSceneRelation(value.scenes);
     const scene = validateScene(value.payload);
-    if (relation.slug !== scene.slug
+    if (relation.sceneCode !== scene.sceneCode
+      || relation.slug !== scene.slug
       || relation.relationship !== scene.relationship
-      || relation.category !== scene.category) {
+      || relation.category !== scene.category
+      || value.version !== scene.version
+      || value.risk !== scene.riskLevel) {
       throw new Error('scene relation does not match payload');
     }
 

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -77,7 +77,7 @@ describe('SceneHomePage', () => {
     expect(screen.getByRole('status')).toHaveTextContent('正在加载经典场景');
   });
 
-  it('shows at most three cards by default and reveals every matching scene', async () => {
+  it('toggles every matching scene without losing button focus', async () => {
     const fourth = scene(4, {
       title: '家务总要催',
       category: '责任习惯',
@@ -90,9 +90,46 @@ describe('SceneHomePage', () => {
     expect(await screen.findByText('手机放不下')).toBeInTheDocument();
     expect(screen.queryByText('家务总要催')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '查看全部经典场景' }));
+    const toggle = screen.getByRole('button', { name: '查看全部经典场景' });
+    const list = screen.getByRole('list', { name: '经典场景' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', list.id);
+
+    await user.click(toggle);
 
     expect(screen.getByText('家务总要催')).toBeInTheDocument();
+    expect(toggle).toHaveTextContent('收起经典场景');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveFocus();
+
+    await user.click(toggle);
+
+    expect(screen.queryByText('家务总要催')).not.toBeInTheDocument();
+    expect(toggle).toHaveTextContent('查看全部经典场景');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveFocus();
+  });
+
+  it('sorts by scene code before limiting without mutating repository results', async () => {
+    const fourth = scene(4, {
+      title: '家务总要催',
+      category: '责任习惯',
+      observableFacts: ['约定收好餐具后，餐具仍留在桌上'],
+    });
+    const shuffled = [fourth, classicScenes[2], classicScenes[0], classicScenes[1]];
+    const originalOrder = shuffled.map((item) => item.sceneCode);
+
+    renderPage(repositoryWith(shuffled));
+
+    await screen.findByText('手机放不下');
+    const links = within(screen.getByRole('list', { name: '经典场景' })).getAllByRole('link');
+    expect(links.map((link) => link.textContent)).toEqual([
+      '手机放不下',
+      '一说就顶嘴',
+      '作业迟迟不开始',
+    ]);
+    expect(screen.queryByText('家务总要催')).not.toBeInTheDocument();
+    expect(shuffled.map((item) => item.sceneCode)).toEqual(originalOrder);
   });
 
   it('filters the loaded catalog by relationship and category', async () => {

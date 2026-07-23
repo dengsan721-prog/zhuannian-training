@@ -6,9 +6,14 @@ const relationshipLabels = {
   family: '家庭',
 } satisfies Record<PublishedSceneVersion['relationship'], string>;
 
-export function SceneList({ scenes }: { scenes: PublishedSceneVersion[] }) {
+type SceneListProps = {
+  id?: string;
+  scenes: PublishedSceneVersion[];
+};
+
+export function SceneList({ id, scenes }: SceneListProps) {
   return (
-    <ul className="scene-list" aria-label="经典场景">
+    <ul id={id} className="scene-list" aria-label="经典场景">
       {scenes.map((scene) => (
         <li key={scene.id}>
           <article className="scene-card">

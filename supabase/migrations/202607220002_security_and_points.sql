@@ -103,11 +103,25 @@ for select to authenticated using (
   private.is_active_participant() and private.has_published_scene(id)
 );
 
+revoke all on
+  public.profiles,
+  public.cohorts,
+  public.cohort_invites,
+  public.cohort_memberships,
+  public.scenes,
+  public.scene_versions,
+  public.training_sessions,
+  public.training_completions,
+  public.follow_up_reviews,
+  public.saved_insights,
+  public.user_badges,
+  public.staff_roles,
+  public.points_ledger
+from public, anon, authenticated;
+
 grant select on public.profiles, public.cohorts, public.cohort_memberships,
   public.scenes, public.scene_versions, public.training_sessions,
   public.training_completions, public.follow_up_reviews, public.saved_insights,
   public.user_badges, public.points_ledger to authenticated;
 
 revoke all on schema private from public, anon, authenticated;
-revoke all on public.staff_roles, public.points_ledger from anon;
-revoke insert, update, delete on public.points_ledger from authenticated;

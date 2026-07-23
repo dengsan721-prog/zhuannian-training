@@ -1,9 +1,137 @@
 begin;
-select plan(15);
+select plan(21);
 select policies_are('public', 'training_completions', array['participant_owns_completion','coach_reads_assigned_completion']);
 select policies_are('public', 'saved_insights', array['participant_owns_saved_insight']);
 select policies_are('public', 'scene_versions', array['eligible_participant_reads_published_scene']);
 select policies_are('public', 'scenes', array['eligible_participant_reads_scene_metadata']);
+
+select is(
+  (
+    select count(*)::bigint
+    from pg_catalog.pg_class as table_class
+    join pg_catalog.pg_namespace as table_namespace
+      on table_namespace.oid = table_class.relnamespace
+    cross join lateral pg_catalog.aclexplode(
+      coalesce(
+        table_class.relacl,
+        pg_catalog.acldefault('r', table_class.relowner)
+      )
+    ) as table_acl
+    where table_namespace.nspname = 'public'
+      and table_class.relkind in ('r', 'p')
+      and table_acl.grantee = 0
+  ),
+  0::bigint,
+  'PUBLIC has no privileges on public base tables'
+);
+select is(
+  (
+    select count(*)::bigint
+    from pg_catalog.pg_class as table_class
+    join pg_catalog.pg_namespace as table_namespace
+      on table_namespace.oid = table_class.relnamespace
+    cross join lateral pg_catalog.aclexplode(
+      coalesce(
+        table_class.relacl,
+        pg_catalog.acldefault('r', table_class.relowner)
+      )
+    ) as table_acl
+    where table_namespace.nspname = 'public'
+      and table_class.relkind in ('r', 'p')
+      and table_acl.grantee = (
+        select role_row.oid
+        from pg_catalog.pg_roles as role_row
+        where role_row.rolname = 'anon'
+      )
+  ),
+  0::bigint,
+  'anonymous users have no privileges on public base tables'
+);
+select is(
+  (
+    select count(*)::bigint
+    from pg_catalog.pg_class as table_class
+    join pg_catalog.pg_namespace as table_namespace
+      on table_namespace.oid = table_class.relnamespace
+    cross join lateral pg_catalog.aclexplode(
+      coalesce(
+        table_class.relacl,
+        pg_catalog.acldefault('r', table_class.relowner)
+      )
+    ) as table_acl
+    where table_namespace.nspname = 'public'
+      and table_class.relkind in ('r', 'p')
+      and table_acl.grantee = (
+        select role_row.oid
+        from pg_catalog.pg_roles as role_row
+        where role_row.rolname = 'authenticated'
+      )
+      and table_acl.privilege_type <> 'SELECT'
+  ),
+  0::bigint,
+  'authenticated users have no non-SELECT privileges on public base tables'
+);
+select is(
+  (
+    select pg_catalog.jsonb_agg(
+      granted_table.table_name
+      order by granted_table.table_name collate "C"
+    )
+    from (
+      select distinct table_class.relname::text as table_name
+      from pg_catalog.pg_class as table_class
+      join pg_catalog.pg_namespace as table_namespace
+        on table_namespace.oid = table_class.relnamespace
+      cross join lateral pg_catalog.aclexplode(
+        coalesce(
+          table_class.relacl,
+          pg_catalog.acldefault('r', table_class.relowner)
+        )
+      ) as table_acl
+      where table_namespace.nspname = 'public'
+        and table_class.relkind in ('r', 'p')
+        and table_acl.grantee = (
+          select role_row.oid
+          from pg_catalog.pg_roles as role_row
+          where role_row.rolname = 'authenticated'
+        )
+        and table_acl.privilege_type = 'SELECT'
+    ) as granted_table
+  ),
+  '[
+    "cohort_memberships",
+    "cohorts",
+    "consent_events",
+    "follow_up_reviews",
+    "points_ledger",
+    "profiles",
+    "saved_insights",
+    "scene_versions",
+    "scenes",
+    "training_completions",
+    "training_sessions",
+    "user_badges"
+  ]'::jsonb,
+  'authenticated SELECT grants match the participant-readable table set'
+);
+
+set local role anon;
+select throws_ok(
+  $$truncate table public.profiles cascade$$,
+  '42501',
+  null,
+  'anonymous users cannot truncate profiles through RLS'
+);
+reset role;
+
+set local role authenticated;
+select throws_ok(
+  $$truncate table public.profiles cascade$$,
+  '42501',
+  null,
+  'authenticated users cannot truncate profiles through RLS'
+);
+reset role;
 
 insert into auth.users(id, aud, role, email, created_at, updated_at) values
   ('00000000-0000-0000-0000-000000000001','authenticated','authenticated','member@example.invalid',now(),now()),

@@ -6,4 +6,7 @@ export interface SceneRepository {
     category?: string;
   }): Promise<PublishedSceneVersion[]>;
   getBySlug(slug: string): Promise<PublishedSceneVersion | null>;
+  getPublishedById(
+    sceneVersionId: string,
+  ): Promise<PublishedSceneVersion | null>;
 }

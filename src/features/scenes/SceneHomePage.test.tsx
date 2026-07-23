@@ -40,6 +40,7 @@ const classicScenes = [
 const repositoryWith = (scenes: PublishedSceneVersion[]): SceneRepository => ({
   listPublished: vi.fn(async () => scenes),
   getBySlug: vi.fn(async (slug) => scenes.find((item) => item.slug === slug) ?? null),
+  getPublishedById: vi.fn(async (id) => scenes.find((item) => item.id === id) ?? null),
 });
 
 function renderPage(repository: SceneRepository) {
@@ -70,6 +71,7 @@ describe('SceneHomePage', () => {
     const repository: SceneRepository = {
       listPublished: () => new Promise(() => undefined),
       getBySlug: async () => null,
+      getPublishedById: async () => null,
     };
 
     renderPage(repository);
@@ -164,6 +166,7 @@ describe('SceneHomePage', () => {
     const repository: SceneRepository = {
       listPublished,
       getBySlug: async () => null,
+      getPublishedById: async () => null,
     };
     const user = userEvent.setup();
 

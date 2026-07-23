@@ -83,6 +83,20 @@ export class SupabaseSceneRepository implements SceneRepository {
     return data === null ? null : this.toPublished(data);
   }
 
+  async getPublishedById(
+    sceneVersionId: string,
+  ): Promise<PublishedSceneVersion | null> {
+    const { data, error } = await this.client
+      .from('scene_versions')
+      .select(sceneSelection)
+      .eq('status', 'published')
+      .eq('id', sceneVersionId)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data === null ? null : this.toPublished(data);
+  }
+
   private toPublished(value: unknown): PublishedSceneVersion {
     if (!isRecord(value)
       || !isNonEmptyString(value.id)

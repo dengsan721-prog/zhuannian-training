@@ -162,6 +162,23 @@ describe('SupabaseSceneRepository', () => {
     expect(fake.query.maybeSingle).toHaveBeenCalledTimes(1);
   });
 
+  it('loads only the exact published version id for recovery', async () => {
+    const fake = fakeClient({ data: joinedRow, error: null });
+    const repository = new SupabaseSceneRepository(fake.client);
+
+    await expect(repository.getPublishedById(joinedRow.id)).resolves.toEqual({
+      ...validScene,
+      id: joinedRow.id,
+      sceneId: joinedRow.scenes.id,
+      status: 'published',
+    });
+    expect(fake.query.eq.mock.calls).toEqual([
+      ['status', 'published'],
+      ['id', joinedRow.id],
+    ]);
+    expect(fake.query.maybeSingle).toHaveBeenCalledTimes(1);
+  });
+
   it('propagates query and validation failures without fallback content', async () => {
     const queryError = new Error('query failed');
     const failingClient = fakeClient({ data: null, error: queryError });
@@ -202,5 +219,9 @@ describe('InMemorySceneRepository', () => {
     await expect(repository.listPublished({ category: '夫妻' })).resolves.toEqual([]);
     await expect(repository.getBySlug(familyScene.slug)).resolves.toEqual(familyScene);
     await expect(repository.getBySlug('missing')).resolves.toBeNull();
+    await expect(repository.getPublishedById(validPublishedScene.id))
+      .resolves.toEqual(validPublishedScene);
+    await expect(repository.getPublishedById('10000000-0000-0000-0000-999999999999'))
+      .resolves.toBeNull();
   });
 });

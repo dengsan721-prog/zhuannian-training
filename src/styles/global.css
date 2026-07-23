@@ -31,8 +31,53 @@ button, [role="button"], input[type="radio"], input[type="checkbox"] { min-width
 .catalog-message { display: grid; gap: var(--space-2); }
 .secondary-action { min-height: var(--touch-target); border: 1px solid var(--color-border); border-radius: 10px; padding: var(--space-2) var(--space-3); color: var(--color-text); background: var(--color-surface); font-weight: 600; }
 .catalog-more { width: 100%; }
+.training-shell, .training-route-message, .safety-stop-page { display: grid; gap: var(--space-3); min-width: 0; }
+.training-shell > *, .training-route-message > *, .safety-stop-page > * { min-width: 0; }
+.training-shell h1, .training-shell h2, .training-shell p,
+.training-route-message h1, .training-route-message p,
+.safety-stop-page h1, .safety-stop-page p { margin-block: 0; }
+.training-shell h1, .training-route-message h1, .safety-stop-page h1 { font-size: clamp(1.35rem, 6vw, 1.75rem); line-height: 1.3; }
+.training-shell h2 { font-size: 1rem; line-height: 1.4; }
+.training-progress { color: var(--color-accent); font-size: 0.875rem; font-weight: 700; }
+.training-progress-announcement { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+.training-step { display: grid; gap: var(--space-3); min-width: 0; }
+.training-step > p { color: var(--color-muted); }
+.training-card, .safety-facts, .strength-lens { border: 1px solid var(--color-border); border-radius: 12px; padding: var(--space-3); background: var(--color-bg); }
+.training-card ul, .safety-facts ul, .strength-lens ul, .completion-feedback ul { margin: var(--space-2) 0 0; padding-inline-start: 1.25rem; }
+.training-card li + li, .safety-facts li + li, .strength-lens li + li, .completion-feedback li + li { margin-block-start: var(--space-1); }
+.safety-facts { border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-border)); }
+.choice-group { display: grid; gap: var(--space-2); min-width: 0; margin: 0; border: 1px solid var(--color-border); border-radius: 12px; padding: var(--space-2); }
+.choice-group legend { max-width: 100%; padding-inline: var(--space-1); font-weight: 700; overflow-wrap: anywhere; }
+.choice-row { display: grid; grid-template-columns: var(--touch-target) minmax(0, 1fr); align-items: start; gap: var(--space-2); min-width: 0; border-radius: 10px; padding: var(--space-1) var(--space-2); cursor: pointer; }
+.choice-row:hover { background: var(--color-bg); }
+.choice-row input { margin: 0; justify-self: center; }
+.choice-row > span { min-width: 0; padding-block: 9px; overflow-wrap: anywhere; }
+.hypothesis-row > span { display: grid; gap: var(--space-1); }
+.hypothesis-row strong { color: var(--color-accent); font-size: 0.825rem; }
+.hypothesis-row small, .strength-lens small { display: block; color: var(--color-muted); line-height: 1.45; }
+.strength-lens { display: grid; gap: var(--space-2); }
+.strength-lens > p { color: var(--color-muted); font-size: 0.875rem; }
+.evidence-groups { display: grid; gap: var(--space-2); min-width: 0; }
+.compact-choice-group { gap: var(--space-1); }
+.training-primary, .training-secondary { width: 100%; }
+.training-exits, .route-actions, .safety-actions { display: grid; gap: var(--space-2); }
+.training-exits > *, .route-actions > *, .safety-actions > * { width: 100%; white-space: normal; }
+.danger-action { min-height: var(--touch-target); border: 1px solid var(--color-danger); border-radius: 10px; padding: var(--space-2) var(--space-3); color: var(--color-danger); background: var(--color-surface); font-weight: 700; }
+.offline-banner, .privacy-recovery { border-radius: 10px; padding: var(--space-2) var(--space-3); color: var(--color-text); background: #eef5f2; }
+.training-error { display: grid; gap: var(--space-2); border-left: 4px solid var(--color-danger); padding: var(--space-2) var(--space-3); background: #fff5f3; }
+.action-plan, .thought-path { display: grid; gap: var(--space-2); margin: 0; }
+.action-plan > div, .thought-path > div { display: grid; gap: var(--space-1); border: 1px solid var(--color-border); border-radius: 10px; padding: var(--space-2) var(--space-3); }
+.action-plan dt, .thought-path dt { color: var(--color-accent); font-size: 0.825rem; font-weight: 700; }
+.action-plan dd, .thought-path dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.completion-feedback { gap: var(--space-4); }
+.insight-line { border-radius: 12px; padding: var(--space-3); color: var(--color-text) !important; background: #eef5f2; font-weight: 700; }
+.safety-priority { color: var(--color-danger); font-weight: 700; }
 @media (max-width: 360px) {
   .scene-filters { grid-template-columns: 1fr; }
+  .app-shell { padding: var(--space-2); }
+  .surface { padding: var(--space-3); }
+  .training-shell, .training-route-message, .safety-stop-page, .training-step { gap: var(--space-2); }
+  .choice-group { padding-inline: var(--space-1); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }

@@ -16,4 +16,10 @@ export class InMemorySceneRepository implements SceneRepository {
   async getBySlug(slug: string): Promise<PublishedSceneVersion | null> {
     return this.scenes.find((scene) => scene.slug === slug) ?? null;
   }
+
+  async getPublishedById(
+    sceneVersionId: string,
+  ): Promise<PublishedSceneVersion | null> {
+    return this.scenes.find((scene) => scene.id === sceneVersionId) ?? null;
+  }
 }

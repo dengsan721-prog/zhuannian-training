@@ -164,6 +164,9 @@ export function ProgressPage({ repository }: ProgressPageProps) {
           )}
         </section>
 
+        <Link className="secondary-action" to="/support/request">
+          请求教练帮助
+        </Link>
         <Link className="primary-action" to="/scenes">继续选择场景</Link>
       </section>
     </main>

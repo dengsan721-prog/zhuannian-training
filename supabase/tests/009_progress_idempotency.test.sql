@@ -805,14 +805,14 @@ select results_eq(
 );
 reset role;
 
-select ok(
-  not exists (
-    select 1
-    from information_schema.tables
-    where table_schema = 'public'
-      and table_name ~ '(support|ticket|coach_note|notification)'
+select is(
+  (
+    select pg_catalog.count(*)
+    from public.support_tickets
+    where user_id = '90000000-0000-4000-8000-000000000010'
   ),
-  'Task 9 review outcomes create no support ticket, coach note, or notification table'
+  0::bigint,
+  'Task 9 seek-help review creates no support ticket row'
 );
 
 select set_config('request.jwt.claim.sub', '90000000-0000-4000-8000-000000000010', false);

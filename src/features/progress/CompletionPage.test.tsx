@@ -1,7 +1,8 @@
 import { createRef } from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildFeedback } from '../../domain/training/buildFeedback';
 import type { CompletionResult } from '../../domain/progress/types';
 import { completedTrainingDraft } from '../../test/fixtures/training';
@@ -12,6 +13,7 @@ const completionId = '55555555-5555-4555-8555-555555555555';
 function renderPage(
   result: CompletionResult,
   withPersonalFeedback = true,
+  onRequestHelp?: () => void,
 ) {
   const completedDraft = completedTrainingDraft();
   return render(
@@ -22,6 +24,7 @@ function renderPage(
           ? buildFeedback(completedDraft.scene, completedDraft)
           : undefined}
         headingRef={createRef<HTMLHeadingElement>()}
+        onRequestHelp={onRequestHelp}
       />
     </MemoryRouter>,
   );
@@ -71,5 +74,23 @@ describe('CompletionPage', () => {
     expect(screen.getByRole('heading', { name: '完成已记录' })).toBeInTheDocument();
     expect(screen.queryByText('我愿意继续核对的可能')).not.toBeInTheDocument();
     expect(screen.queryByText('第一念')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '请求教练帮助' }))
+      .toHaveAttribute('href', '/support/request');
+  });
+
+  it('uses an active callback only for a live completion handoff', async () => {
+    const user = userEvent.setup();
+    const onRequestHelp = vi.fn();
+    renderPage({
+      completionId,
+      awarded: true,
+      pointsDelta: 10,
+    }, true, onRequestHelp);
+
+    const action = screen.getByRole('button', { name: '请求教练帮助' });
+    expect(screen.queryByRole('link', { name: '请求教练帮助' }))
+      .not.toBeInTheDocument();
+    await user.click(action);
+    expect(onRequestHelp).toHaveBeenCalledTimes(1);
   });
 });

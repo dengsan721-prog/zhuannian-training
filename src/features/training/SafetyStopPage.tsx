@@ -5,6 +5,8 @@ import type { SafetyContext } from './trainingDraftStore';
 type SafetyStopPageProps = {
   scene: PublishedSceneVersion | null;
   context: SafetyContext;
+  stopState: 'stopping' | 'confirmed' | 'unknown';
+  onRetryStop?: () => void;
   onExit?: () => void;
   onTrustedSupport?: () => void;
   onReportHandoff?: (context: SafetyContext) => void;
@@ -15,13 +17,14 @@ type SafetyStopPageProps = {
 export function SafetyStopPage({
   scene,
   context,
+  stopState,
+  onRetryStop,
   onExit,
   onTrustedSupport,
   onReportHandoff,
   authoredUnavailable = false,
   onRetryAuthored,
 }: SafetyStopPageProps) {
-  const [handoffRequested, setHandoffRequested] = useState(false);
   const [trustedSupportRequested, setTrustedSupportRequested] = useState(false);
   const authored = scene?.safetyRoute;
   const heading = authored?.heading ?? '优先保护你和相关人的安全';
@@ -53,6 +56,25 @@ export function SafetyStopPage({
           如果有人正面临紧迫危险，请联系当地紧急服务；
           本工具不是急救或危机热线。
         </p>
+        {stopState === 'stopping' && (
+          <p role="status">正在确认普通训练已停止；安全页面会保持打开。</p>
+        )}
+        {stopState === 'unknown' && (
+          <div className="training-error" role="alert">
+            <p>停止结果尚无法确认，普通训练仍保持停止，不会恢复训练。</p>
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={onRetryStop}
+            >
+              重试停止训练
+            </button>
+          </div>
+        )}
+        {stopState === 'confirmed' && (
+          <p role="status">普通训练已停止。</p>
+        )}
+        <p>下一页会显示将提交的信息；现在不会创建报告。</p>
         <div className="safety-actions">
           <button type="button" className="primary-action" onClick={onExit}>
             退出训练
@@ -71,21 +93,15 @@ export function SafetyStopPage({
             type="button"
             className="secondary-action"
             onClick={() => {
-              setHandoffRequested(true);
               onReportHandoff?.(context);
             }}
           >
-            请求转交安全支持
+            查看安全报告选项
           </button>
         </div>
         {trustedSupportRequested && (
           <p role="status">
             请现在联系一位可信任、能够提供现实帮助的人；本页不会代你发送消息。
-          </p>
-        )}
-        {handoffRequested && (
-          <p role="status">
-            交接意愿目前只保留在本页，尚未提交；安全报告功能尚未上线，请同时联系现实中的支持者。
           </p>
         )}
       </section>

@@ -74,6 +74,8 @@ describe('ProgressPage', () => {
     expect(screen.getByText('第一次转念')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '完成一次简短复盘' }))
       .toHaveAttribute('href', `/reviews/${completionId}`);
+    expect(screen.getByRole('link', { name: '请求教练帮助' }))
+      .toHaveAttribute('href', '/support/request');
     expect(document.body.textContent).not.toMatch(
       /排行榜|排名|第\s*\d+\s*名|末位|落后|断签|失败家长|思想正确率/,
     );

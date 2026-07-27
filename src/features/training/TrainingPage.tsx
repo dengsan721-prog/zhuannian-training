@@ -24,6 +24,10 @@ import type { ProgressRepository } from '../../lib/repositories/ProgressReposito
 import type { TrainingRuntimeRepository } from '../../lib/repositories/TrainingRuntimeRepository';
 import { CompletionPage } from '../progress/CompletionPage';
 import { pendingCompletionStore } from '../progress/pendingCompletionStore';
+import {
+  buildCurrentTrainingSupportIntent,
+  currentTrainingSupportIntent,
+} from '../support/currentTrainingSupportIntent';
 import { EvidenceBoundaryStep } from './EvidenceBoundaryStep';
 import { ExpressionActionStep } from './ExpressionActionStep';
 import { FirstThoughtStep } from './FirstThoughtStep';
@@ -148,7 +152,7 @@ export function TrainingPage({
   const routeToSafety = useCallback((source: 'user' | 'server') => {
     const current = draftRef.current;
     if (source === 'server') {
-      saveSafetyContext(current.sessionId, {
+      saveSafetyContext(current.userId, current.sessionId, {
         sceneVersionId: current.scene.id,
         source: 'server',
       });
@@ -500,7 +504,7 @@ export function TrainingPage({
         signalCode: 'user_declared_danger',
         at: now().toISOString(),
       });
-      saveSafetyContext(current.sessionId, {
+      saveSafetyContext(current.userId, current.sessionId, {
         sceneVersionId: current.scene.id,
         source: 'user',
         signalCode: 'user_declared_danger',
@@ -528,6 +532,35 @@ export function TrainingPage({
       setError('本次练习已失效，请返回场景页重新选择。');
     }
   }, [navigate, now, replaceDraft]);
+
+  const requestHelp = useCallback(() => {
+    if (!confirmedCompletion) {
+      navigate('/support/request');
+      return;
+    }
+    try {
+      const intent = buildCurrentTrainingSupportIntent(
+        confirmedCompletion.completedDraft.userId,
+        confirmedCompletion.result.completionId,
+        confirmedCompletion.completedDraft,
+      );
+      currentTrainingSupportIntent.set(intent);
+      navigate('/support/request');
+    } catch (caught) {
+      currentTrainingSupportIntent.clearAll();
+      if (readErrorMessage(caught) === 'safety_required') {
+        const completed = confirmedCompletion.completedDraft;
+        saveSafetyContext(completed.userId, completed.sessionId, {
+          sceneVersionId: completed.scene.id,
+          source: 'user',
+          signalCode: 'user_declared_danger',
+        });
+        routeToSafety('user');
+        return;
+      }
+      navigate('/support/request');
+    }
+  }, [confirmedCompletion, navigate, routeToSafety]);
 
   if (view === 'content-update') {
     return (
@@ -603,6 +636,7 @@ export function TrainingPage({
             result={confirmedCompletion.result}
             feedback={feedback ?? undefined}
             headingRef={headingRef}
+            onRequestHelp={requestHelp}
           />
         ) : (
           <>

@@ -12,12 +12,14 @@ type CompletionPageProps = {
   result: CompletionResult;
   feedback?: TrainingFeedback;
   headingRef?: RefObject<HTMLHeadingElement | null>;
+  onRequestHelp?: () => void;
 };
 
 export function CompletionPage({
   result,
   feedback,
   headingRef,
+  onRequestHelp,
 }: CompletionPageProps) {
   const fallbackHeadingRef = useRef<HTMLHeadingElement>(null);
   const resolvedHeadingRef = headingRef ?? fallbackHeadingRef;
@@ -49,6 +51,19 @@ export function CompletionPage({
         >
           稍后复盘
         </Link>
+        {onRequestHelp ? (
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={onRequestHelp}
+          >
+            请求教练帮助
+          </button>
+        ) : (
+          <Link className="secondary-action" to="/support/request">
+            请求教练帮助
+          </Link>
+        )}
       </nav>
     </section>
   );

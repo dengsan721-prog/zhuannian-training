@@ -227,7 +227,7 @@ export function FollowUpPage({
             {supportSelected && (
               <aside className="support-choice">
                 <p>是否寻求支持由你决定；这次选择不会自动通知教练。</p>
-                <Link className="secondary-action" to="/support">
+                <Link className="secondary-action" to="/support/request">
                   了解可选支持
                 </Link>
               </aside>

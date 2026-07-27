@@ -29,7 +29,9 @@ import {
   reduceTraining,
   validEvidence,
 } from '../../test/fixtures/training';
+import { supportBaseTrainingDraft } from '../../test/fixtures/support';
 import { pendingCompletionStore } from '../progress/pendingCompletionStore';
+import { currentTrainingSupportIntent } from '../support/currentTrainingSupportIntent';
 import { trainingDraftStore } from './trainingDraftStore';
 import { TrainingPage } from './TrainingPage';
 
@@ -166,8 +168,10 @@ async function chooseEvidence(
   await user.click(screen.getByRole('button', { name: '继续' }));
 }
 
-function expressionDraft(): TrainingDraft {
-  return reduceTraining(baseTrainingDraft(), [
+function expressionDraft(
+  initialDraft: TrainingDraft = baseTrainingDraft(),
+): TrainingDraft {
+  return reduceTraining(initialDraft, [
     { type: 'confirm-safe-facts', at: actionTimes.facts },
     {
       type: 'choose-first-thought',
@@ -206,6 +210,7 @@ describe('TrainingPage', () => {
   beforeEach(() => {
     sessionStorage.clear();
     trainingDraftStore.removeAllFromMemory();
+    currentTrainingSupportIntent.clearAll();
   });
 
   afterEach(() => {
@@ -346,6 +351,55 @@ describe('TrainingPage', () => {
     expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)).toBeNull();
   });
 
+  it('hands off the exact confirmed completion and four-field live snapshot only', async () => {
+    const user = userEvent.setup();
+    const completionId = '55555555-5555-4555-8555-555555555555';
+    const draft = expressionDraft(supportBaseTrainingDraft());
+    renderTraining(draft, {
+      progress: progressWith(vi.fn(async () => ({
+        completionId,
+        awarded: true as const,
+        pointsDelta: 10 as const,
+      }))),
+    });
+
+    const complete = await screen.findByRole('button', {
+      name: '完成这次练习',
+    });
+    await waitFor(() => expect(complete).toBeEnabled());
+    await user.click(complete);
+    expect(await screen.findByRole('heading', { name: '转念一刻' }))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '请求教练帮助' }));
+
+    expect(screen.getByLabelText('current path')).toHaveTextContent(
+      '/support/request',
+    );
+    const handoff = currentTrainingSupportIntent.peek(draft.userId);
+    expect(handoff?.intent.completionId).toBe(completionId);
+    expect(handoff?.intent.snapshot).toEqual({
+      sceneVersionId: draft.scene.id,
+      selectedThought: draft.firstThought,
+      selectedHypothesisIds: [...draft.selectedHypothesisIds].sort(),
+      evidence: draft.evidence,
+    });
+    expect(Object.keys(handoff?.intent.snapshot ?? {}).sort()).toEqual([
+      'evidence',
+      'sceneVersionId',
+      'selectedHypothesisIds',
+      'selectedThought',
+    ]);
+    expect(JSON.stringify(handoff?.intent.snapshot)).not.toMatch(
+      /predictedResponse|feedback|boundaryText|newExpression|microAction|fallback|points|completionId|他根本没把我的话当回事/,
+    );
+    expect(Array.from({ length: sessionStorage.length }, (_value, index) => (
+      sessionStorage.getItem(sessionStorage.key(index) ?? '')
+    )).join('')).not.toMatch(
+      /selectedThought|selectedHypothesisIds|evidence|他根本没把我的话当回事/,
+    );
+  });
+
   it('lets danger take over an in-flight completion and permanently clears its retry command', async () => {
     const user = userEvent.setup();
     let rejectCompletion!: (reason: Error) => void;
@@ -455,7 +509,9 @@ describe('TrainingPage', () => {
     expect(complete).not.toHaveBeenCalled();
     expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)).toBeNull();
     expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
-    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${draft.userId}:${draft.sessionId}`,
+    ))
       .toContain('"source":"server"');
     expect(screen.queryByText(/训练完成|完成已记录|获得\s*10|转念一刻/))
       .not.toBeInTheDocument();
@@ -503,7 +559,9 @@ describe('TrainingPage', () => {
     expect(complete).toHaveBeenCalledTimes(1);
     expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)).toBeNull();
     expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
-    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${draft.userId}:${draft.sessionId}`,
+    ))
       .toContain('"source":"server"');
     expect(screen.queryByText(/训练完成|完成已记录|获得\s*10|转念一刻/))
       .not.toBeInTheDocument();
@@ -550,7 +608,9 @@ describe('TrainingPage', () => {
     expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)?.status)
       .toBe('active');
     expect(pendingCompletionStore.load(draft.userId, draft.sessionId)).toBeNull();
-    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${draft.userId}:${draft.sessionId}`,
+    ))
       .toBeNull();
   });
 
@@ -596,7 +656,9 @@ describe('TrainingPage', () => {
       .toBe('active');
     expect(pendingCompletionStore.load(draft.userId, draft.sessionId))
       .not.toBeNull();
-    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${draft.userId}:${draft.sessionId}`,
+    ))
       .toBeNull();
   });
 
@@ -700,7 +762,9 @@ describe('TrainingPage', () => {
     });
     expect(screen.queryByText(draft.scene.newExpression!)).not.toBeInTheDocument();
     expect(trainingDraftStore.load(draft.userId, draft.sessionId)).toBeNull();
-    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${draft.userId}:${draft.sessionId}`,
+    ))
       .not.toMatch(/他根本没把我的话当回事|争辩或反抗|need-autonomy/);
   });
 
@@ -821,7 +885,9 @@ describe('TrainingPage', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('current path')).toHaveTextContent('safety-stop');
     });
-    expect(sessionStorage.getItem(`turning-mind:safety:${secondDraft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${secondDraft.userId}:${secondDraft.sessionId}`,
+    ))
       .toContain('"source":"server"');
     expect(user).toBeDefined();
   });
@@ -895,7 +961,9 @@ describe('TrainingPage', () => {
       expect(screen.getByLabelText('current path')).toHaveTextContent('safety-stop');
     });
     expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)).toBeNull();
-    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${draft.userId}:${draft.sessionId}`,
+    ))
       .toContain('"source":"server"');
   });
 
@@ -1005,7 +1073,9 @@ describe('TrainingPage', () => {
     });
     expect(trainingDraftStore.load(draft.userId, draft.sessionId, now)?.step)
       .toBe('safety-fact');
-    expect(sessionStorage.getItem(`turning-mind:safety:${draft.sessionId}`))
+    expect(sessionStorage.getItem(
+      `turning-mind:safety:${draft.userId}:${draft.sessionId}`,
+    ))
       .toBeNull();
   });
 

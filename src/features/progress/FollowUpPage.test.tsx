@@ -83,7 +83,7 @@ describe('FollowUpPage', () => {
     await user.click(screen.getByRole('radio', { name: '我需要更多支持' }));
 
     expect(screen.getByRole('link', { name: '了解可选支持' }))
-      .toHaveAttribute('href', '/support');
+      .toHaveAttribute('href', '/support/request');
     expect(screen.getByRole('link', { name: '了解可选支持' }))
       .toHaveClass('secondary-action');
     expect(screen.getByText(/不会自动通知教练/)).toBeInTheDocument();

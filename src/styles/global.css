@@ -89,12 +89,78 @@ button, [role="button"], input[type="radio"], input[type="checkbox"] { min-width
 .scene-progress-summary h2 { font-size: 1rem; }
 .scene-class-summary { color: var(--color-muted); font-size: 0.875rem; }
 .safety-priority { color: var(--color-danger); font-weight: 700; }
+.support-shell, .support-form, .support-actions, .support-success,
+.consent-preview, .safety-report-preview, .support-status-page,
+.support-status-section, .revoke-confirmation {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.support-shell > *, .support-form > *, .support-actions > *,
+.support-success > *, .consent-preview > *, .safety-report-preview > *,
+.support-status-page > *, .support-status-section > *,
+.revoke-confirmation > * { min-width: 0; }
+.support-shell h1, .support-shell h2, .support-shell p,
+.support-shell ul, .support-shell dl { margin-block: 0; }
+.support-shell h1 {
+  font-size: clamp(1.35rem, 6vw, 1.75rem);
+  line-height: 1.3;
+}
+.support-shell h2 { font-size: 1.05rem; line-height: 1.4; }
+.support-actions > *, .support-form > button, .support-success > a,
+.support-status-section .training-error > button,
+.revoke-confirmation > button, .support-status-card > button,
+.safety-report-page .training-error > a, .support-status-page > a {
+  width: 100%;
+  white-space: normal;
+}
+.support-note { display: grid; gap: var(--space-1); min-width: 0; }
+.support-note textarea {
+  width: 100%;
+  min-height: 7.5rem;
+  resize: vertical;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+.consent-preview, .safety-report-preview, .support-status-card {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: var(--space-3);
+  background: var(--color-bg);
+}
+.support-preview-list { display: grid; gap: var(--space-2); min-width: 0; }
+.support-preview-list > div { display: grid; gap: var(--space-1); min-width: 0; }
+.support-preview-list dt {
+  color: var(--color-accent);
+  font-size: 0.825rem;
+  font-weight: 700;
+}
+.support-preview-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.support-preview-list ul { padding-inline-start: 1.25rem; }
+.support-status-list {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0;
+  list-style: none;
+}
+.support-status-card { display: grid; gap: var(--space-3); min-width: 0; }
+.support-success {
+  border-radius: 12px;
+  padding: var(--space-3);
+  background: #eef5f2;
+}
+.long-value { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 @media (max-width: 360px) {
   .scene-filters { grid-template-columns: 1fr; }
   .app-shell { padding: var(--space-2); }
   .surface { padding: var(--space-3); }
-  .training-shell, .training-route-message, .safety-stop-page, .training-step, .progress-shell, .completion-page, .review-form { gap: var(--space-2); }
+  .training-shell, .training-route-message, .safety-stop-page, .training-step, .progress-shell, .completion-page, .review-form, .support-shell, .support-form, .support-actions, .support-status-section { gap: var(--space-2); }
   .choice-group { padding-inline: var(--space-1); }
+  .consent-preview, .safety-report-preview, .support-status-card { padding: var(--space-2); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }

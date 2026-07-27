@@ -29,15 +29,18 @@ describe('SafetyStopPage', () => {
       <SafetyStopPage
         scene={scene}
         context={{ sceneVersionId: scene.id, source: 'server' }}
+        stopState="confirmed"
       />,
     );
 
     expect(screen.getByRole('heading', { name: '先离开当前危险环境' })).toBeInTheDocument();
     expect(screen.getByText('优先保护你和相关人的安全')).toBeInTheDocument();
     expect(screen.getByText(/当地紧急服务/)).toBeInTheDocument();
+    expect(screen.getByText('下一页会显示将提交的信息；现在不会创建报告。'))
+      .toBeInTheDocument();
     expect(screen.getByRole('button', { name: '退出训练' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '联系可信任的人' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '请求转交安全支持' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看安全报告选项' })).toBeInTheDocument();
     expect(screen.queryByText(/一种需要验证的可能|品格种子|自主意识/)).not.toBeInTheDocument();
     expect(screen.queryByText(validPublishedScene.newExpression!)).not.toBeInTheDocument();
   });
@@ -54,6 +57,7 @@ describe('SafetyStopPage', () => {
           source: 'user',
           signalCode: 'user_declared_danger',
         }}
+        stopState="confirmed"
         onReportHandoff={onReportHandoff}
       />,
     );
@@ -61,7 +65,7 @@ describe('SafetyStopPage', () => {
     expect(screen.getByRole('heading', { name: '优先保护你和相关人的安全' }))
       .toBeInTheDocument();
     expect(screen.getByText(/若能够安全离开/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '请求转交安全支持' }));
+    await user.click(screen.getByRole('button', { name: '查看安全报告选项' }));
     expect(onReportHandoff).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/报告已创建/)).not.toBeInTheDocument();
   });
@@ -72,14 +76,39 @@ describe('SafetyStopPage', () => {
       <SafetyStopPage
         scene={null}
         context={{ sceneVersionId: validPublishedScene.id, source: 'server' }}
+        stopState="confirmed"
       />,
     );
 
     await user.click(screen.getByRole('button', { name: '联系可信任的人' }));
     expect(screen.getByText(/本页不会代你发送消息/)).toHaveAttribute('role', 'status');
 
-    await user.click(screen.getByRole('button', { name: '请求转交安全支持' }));
-    expect(screen.getByText(/只保留在本页，尚未提交/)).toHaveAttribute('role', 'status');
+    await user.click(screen.getByRole('button', { name: '查看安全报告选项' }));
+    expect(screen.getByText(/现在不会创建报告/)).toBeInTheDocument();
     expect(screen.queryByText(/报告已创建/)).not.toBeInTheDocument();
+  });
+
+  it('keeps an unknown safety-stop result separate and retryable', async () => {
+    const user = userEvent.setup();
+    const onRetryStop = vi.fn();
+    const onReportHandoff = vi.fn();
+    render(
+      <SafetyStopPage
+        scene={null}
+        context={{ sceneVersionId: validPublishedScene.id, source: 'user', signalCode: 'user_declared_danger' }}
+        stopState="unknown"
+        onRetryStop={onRetryStop}
+        onReportHandoff={onReportHandoff}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '停止结果尚无法确认，普通训练仍保持停止',
+    );
+    await user.click(screen.getByRole('button', { name: '重试停止训练' }));
+    expect(onRetryStop).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: '查看安全报告选项' }));
+    expect(onReportHandoff).toHaveBeenCalledTimes(1);
+    expect(onRetryStop).toHaveBeenCalledTimes(1);
   });
 });

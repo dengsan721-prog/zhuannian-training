@@ -1,4 +1,8 @@
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { CompletionResult } from '../../domain/progress/types';
 import { createTrainingDraft } from '../../domain/training/trainingReducer';
@@ -7,7 +11,9 @@ import type { ProgressRepository } from '../../lib/repositories/ProgressReposito
 import type { SceneRepository } from '../../lib/repositories/SceneRepository';
 import { SupabaseProgressRepository } from '../../lib/repositories/SupabaseProgressRepository';
 import { SupabaseSceneRepository } from '../../lib/repositories/SupabaseSceneRepository';
+import { SupabaseSupportRepository } from '../../lib/repositories/SupabaseSupportRepository';
 import { SupabaseTrainingRuntimeRepository } from '../../lib/repositories/SupabaseTrainingRuntimeRepository';
+import type { SupportRepository } from '../../lib/repositories/SupportRepository';
 import type { TrainingRuntimeRepository } from '../../lib/repositories/TrainingRuntimeRepository';
 import { getSupabaseClient } from '../../lib/supabase/client';
 import { CompletionPage } from '../progress/CompletionPage';
@@ -19,9 +25,13 @@ import {
   loadPendingStart,
   loadRecoveryEnvelope,
   loadSafetyContext,
+  loadSafetyStopRetryMarker,
   removePendingStart,
   removeSafetyContext,
+  removeSafetyStateForOtherUsers,
+  removeSafetyStopRetryMarker,
   saveSafetyContext,
+  saveSafetyStopRetryMarker,
   trainingDraftStore,
 } from './trainingDraftStore';
 
@@ -42,6 +52,7 @@ export type TrainingRouteDependencies = {
   sceneRepository?: SceneRepository;
   runtimeRepository?: TrainingRuntimeRepository;
   progressRepository?: ProgressRepository;
+  supportRepository?: SupportRepository;
   getCurrentUserId?: () => Promise<string>;
   now?: () => Date;
   online?: boolean;
@@ -70,6 +81,12 @@ function resolveProgressRepository(
   repository?: ProgressRepository,
 ): ProgressRepository {
   return repository ?? new SupabaseProgressRepository(getSupabaseClient());
+}
+
+function resolveSupportRepository(
+  repository?: SupportRepository,
+): SupportRepository {
+  return repository ?? new SupabaseSupportRepository(getSupabaseClient());
 }
 
 function readErrorMessage(error: unknown): string {
@@ -237,7 +254,7 @@ export function TrainingStartRoute({
         if (!uuidPattern.test(result.sessionId)) throw new Error('invalid_session_id');
 
         if (result.route === 'safety-stop') {
-          saveSafetyContext(result.sessionId, {
+          saveSafetyContext(userId, result.sessionId, {
             sceneVersionId: pending.sceneVersionId,
             source: 'server',
           });
@@ -426,7 +443,7 @@ export function TrainingSessionRoute({
               if (route === 'safety-stop') {
                 pendingCompletionStore.remove(userId, sessionId);
                 trainingDraftStore.remove(userId, sessionId);
-                saveSafetyContext(sessionId, {
+                saveSafetyContext(userId, sessionId, {
                   sceneVersionId: pendingCompletion.sceneVersionId,
                   source: 'server',
                 });
@@ -483,7 +500,7 @@ export function TrainingSessionRoute({
           return;
         }
         if (route === 'safety-stop') {
-          saveSafetyContext(sessionId, {
+          saveSafetyContext(userId, sessionId, {
             sceneVersionId: envelope.sceneVersionId,
             source: 'server',
           });
@@ -623,46 +640,169 @@ export function TrainingSessionRoute({
 
 export function TrainingSafetyRoute({
   sceneRepository,
+  supportRepository,
+  getCurrentUserId = defaultCurrentUserId,
 }: TrainingRouteDependencies) {
   const { sessionId = '' } = useParams();
   const navigate = useNavigate();
-  const [attempt, setAttempt] = useState(0);
+  const routeEpochRef = useRef(0);
+  const manualStopInFlightRef = useRef<string | null>(null);
   const [state, setState] = useState<
-    | { status: 'loading' }
-    | { status: 'invalid' }
+    | { status: 'loading'; routeSessionId: string; epoch: number }
+    | { status: 'invalid'; routeSessionId: string; epoch: number }
+    | {
+        status: 'retry-only';
+        routeSessionId: string;
+        epoch: number;
+        ownerUserId: string;
+        stopState: 'stopping' | 'confirmed' | 'unknown';
+      }
     | {
         status: 'ready';
+        routeSessionId: string;
+        epoch: number;
+        ownerUserId: string;
         context: NonNullable<ReturnType<typeof loadSafetyContext>>;
         scene: Awaited<ReturnType<SceneRepository['getPublishedById']>>;
-        authoredUnavailable?: boolean;
+        authoredUnavailable: boolean;
+        stopState: 'stopping' | 'confirmed' | 'unknown';
       }
-  >({ status: 'loading' });
+  >({ status: 'loading', routeSessionId: sessionId, epoch: 0 });
 
   useEffect(() => {
     let active = true;
+    const epoch = routeEpochRef.current + 1;
+    routeEpochRef.current = epoch;
+    const isCurrentAttempt = () =>
+      active && routeEpochRef.current === epoch;
 
     const load = async () => {
       if (!uuidPattern.test(sessionId)) {
-        if (active) setState({ status: 'invalid' });
-        return;
-      }
-      const context = loadSafetyContext(sessionId);
-      if (!context) {
-        setState({ status: 'invalid' });
-        return;
-      }
-      try {
-        const scene = await resolveSceneRepository(sceneRepository)
-          .getPublishedById(context.sceneVersionId);
-        if (active) setState({ status: 'ready', context, scene });
-      } catch {
-        if (active) {
+        if (isCurrentAttempt()) {
           setState({
-            status: 'ready',
-            context,
-            scene: null,
-            authoredUnavailable: true,
+            status: 'invalid',
+            routeSessionId: sessionId,
+            epoch,
           });
+        }
+        return;
+      }
+      let ownerUserId: string;
+      try {
+        ownerUserId = await getCurrentUserId();
+      } catch {
+        if (isCurrentAttempt()) {
+          setState({
+            status: 'invalid',
+            routeSessionId: sessionId,
+            epoch,
+          });
+        }
+        return;
+      }
+      if (!isCurrentAttempt() || !uuidPattern.test(ownerUserId)) {
+        if (isCurrentAttempt()) {
+          setState({
+            status: 'invalid',
+            routeSessionId: sessionId,
+            epoch,
+          });
+        }
+        return;
+      }
+      removeSafetyStateForOtherUsers(ownerUserId);
+      const context = loadSafetyContext(ownerUserId, sessionId);
+      const retryMarker = loadSafetyStopRetryMarker(ownerUserId, sessionId);
+      if (!context && !retryMarker) {
+        setState({
+          status: 'invalid',
+          routeSessionId: sessionId,
+          epoch,
+        });
+        return;
+      }
+      if (!context) {
+        setState({
+          status: 'retry-only',
+          routeSessionId: sessionId,
+          epoch,
+          ownerUserId,
+          stopState: 'stopping',
+        });
+        try {
+          await resolveSupportRepository(supportRepository)
+            .stopTrainingForSafety(sessionId);
+          removeSafetyStopRetryMarker(ownerUserId, sessionId);
+          if (!isCurrentAttempt()) return;
+          setState({
+            status: 'retry-only',
+            routeSessionId: sessionId,
+            epoch,
+            ownerUserId,
+            stopState: 'confirmed',
+          });
+        } catch {
+          if (!isCurrentAttempt()) return;
+          setState({
+            status: 'retry-only',
+            routeSessionId: sessionId,
+            epoch,
+            ownerUserId,
+            stopState: 'unknown',
+          });
+        }
+        return;
+      }
+      const shouldStop = context.source === 'user' || retryMarker !== null;
+      setState({
+        status: 'ready',
+        routeSessionId: sessionId,
+        epoch,
+        ownerUserId,
+        context,
+        scene: null,
+        authoredUnavailable: false,
+        stopState: shouldStop ? 'stopping' : 'confirmed',
+      });
+
+      void resolveSceneRepository(sceneRepository)
+        .getPublishedById(context.sceneVersionId)
+        .then((scene) => {
+          if (!isCurrentAttempt()) return;
+          setState((current) => current.status === 'ready'
+            && current.routeSessionId === sessionId
+            && current.epoch === epoch
+            ? { ...current, scene, authoredUnavailable: false }
+            : current);
+        })
+        .catch(() => {
+          if (!isCurrentAttempt()) return;
+          setState((current) => current.status === 'ready'
+            && current.routeSessionId === sessionId
+            && current.epoch === epoch
+            ? { ...current, scene: null, authoredUnavailable: true }
+            : current);
+        });
+
+      if (shouldStop) {
+        saveSafetyStopRetryMarker(ownerUserId, sessionId);
+        try {
+          await resolveSupportRepository(supportRepository)
+            .stopTrainingForSafety(sessionId);
+          removeSafetyStopRetryMarker(ownerUserId, sessionId);
+          if (!isCurrentAttempt()) return;
+          setState((current) => current.status === 'ready'
+            && current.routeSessionId === sessionId
+            && current.epoch === epoch
+            ? { ...current, stopState: 'confirmed' }
+            : current);
+        } catch {
+          if (!isCurrentAttempt()) return;
+          setState((current) => current.status === 'ready'
+            && current.routeSessionId === sessionId
+            && current.epoch === epoch
+            ? { ...current, stopState: 'unknown' }
+            : current);
         }
       }
     };
@@ -670,32 +810,137 @@ export function TrainingSafetyRoute({
     void load();
     return () => {
       active = false;
+      if (routeEpochRef.current === epoch) {
+        routeEpochRef.current += 1;
+      }
     };
-  }, [attempt, sceneRepository, sessionId]);
+  }, [getCurrentUserId, sceneRepository, sessionId, supportRepository]);
 
-  if (state.status === 'ready') {
-    return (
-      <SafetyStopPage
-        scene={state.scene}
-        context={state.context}
-        authoredUnavailable={state.authoredUnavailable}
-        onRetryAuthored={() => {
-          setState({ status: 'loading' });
-          setAttempt((value) => value + 1);
-        }}
-        onExit={() => {
-          removeSafetyContext(sessionId);
-          navigate('/scenes', { replace: true });
-        }}
-      />
-    );
-  }
-  if (state.status === 'loading') {
+  const retryAuthored = () => {
+    if (state.status !== 'ready'
+      || state.routeSessionId !== sessionId
+      || state.epoch !== routeEpochRef.current) return;
+    const attemptSessionId = state.routeSessionId;
+    const attemptEpoch = state.epoch;
+    const sceneVersionId = state.context.sceneVersionId;
+    setState({ ...state, authoredUnavailable: false });
+    void resolveSceneRepository(sceneRepository)
+      .getPublishedById(sceneVersionId)
+      .then((scene) => {
+        if (routeEpochRef.current !== attemptEpoch) return;
+        setState((current) => current.status === 'ready'
+          && current.routeSessionId === attemptSessionId
+          && current.epoch === attemptEpoch
+          ? { ...current, scene, authoredUnavailable: false }
+          : current);
+      })
+      .catch(() => {
+        if (routeEpochRef.current !== attemptEpoch) return;
+        setState((current) => current.status === 'ready'
+          && current.routeSessionId === attemptSessionId
+          && current.epoch === attemptEpoch
+          ? { ...current, scene: null, authoredUnavailable: true }
+          : current);
+      });
+  };
+
+  const retryStop = () => {
+    if ((state.status !== 'ready' && state.status !== 'retry-only')
+      || state.routeSessionId !== sessionId
+      || state.epoch !== routeEpochRef.current) return;
+    const ownerUserId = state.ownerUserId;
+    const attemptSessionId = state.routeSessionId;
+    const attemptEpoch = state.epoch;
+    const attemptKey = `${ownerUserId}:${attemptSessionId}:${attemptEpoch}`;
+    if (manualStopInFlightRef.current === attemptKey) return;
+    manualStopInFlightRef.current = attemptKey;
+    saveSafetyStopRetryMarker(ownerUserId, attemptSessionId);
+    setState({ ...state, stopState: 'stopping' });
+    const attempt = async () => {
+      try {
+        await resolveSupportRepository(supportRepository)
+          .stopTrainingForSafety(attemptSessionId);
+        removeSafetyStopRetryMarker(ownerUserId, attemptSessionId);
+        if (routeEpochRef.current !== attemptEpoch) return;
+        setState((current) => current.status === 'ready'
+          || current.status === 'retry-only'
+          ? current.routeSessionId === attemptSessionId
+            && current.epoch === attemptEpoch
+            ? { ...current, stopState: 'confirmed' }
+            : current
+          : current);
+      } catch {
+        if (routeEpochRef.current !== attemptEpoch) return;
+        setState((current) => current.status === 'ready'
+          || current.status === 'retry-only'
+          ? current.routeSessionId === attemptSessionId
+            && current.epoch === attemptEpoch
+            ? { ...current, stopState: 'unknown' }
+            : current
+          : current);
+      } finally {
+        if (manualStopInFlightRef.current === attemptKey) {
+          manualStopInFlightRef.current = null;
+        }
+      }
+    };
+    void attempt();
+  };
+
+  const stateMatchesRoute = state.routeSessionId === sessionId;
+  if (!stateMatchesRoute || state.status === 'loading') {
     return (
       <RouteMessage
         heading="正在打开安全支持"
         message="普通训练保持停止。"
         status="status"
+      />
+    );
+  }
+  if (state.status === 'ready') {
+    const boundSessionId = state.routeSessionId;
+    return (
+      <SafetyStopPage
+        scene={state.scene}
+        context={state.context}
+        stopState={state.stopState}
+        authoredUnavailable={state.authoredUnavailable}
+        onRetryAuthored={retryAuthored}
+        onRetryStop={retryStop}
+        onExit={() => {
+          removeSafetyContext(state.ownerUserId, boundSessionId);
+          navigate('/scenes', { replace: true });
+        }}
+        onReportHandoff={() => {
+          navigate(`/support/safety-report/${boundSessionId}`);
+        }}
+      />
+    );
+  }
+  if (state.status === 'retry-only') {
+    const unknown = state.stopState === 'unknown';
+    return (
+      <RouteMessage
+        heading="优先保护你和相关人的安全"
+        message={state.stopState === 'confirmed'
+          ? '普通训练已停止。此设备已退出原报告上下文，不会恢复普通训练。'
+          : state.stopState === 'stopping'
+            ? '正在确认普通训练已停止；安全页面会保持打开。'
+            : '停止结果尚无法确认，普通训练仍保持停止，不会恢复训练。'}
+        status={unknown ? 'alert' : 'status'}
+        action={{
+          label: unknown ? '重试停止训练' : '查看通用安全支持',
+          run: unknown
+            ? retryStop
+            : () => navigate('/support/safety-report'),
+          disabled: state.stopState === 'stopping',
+        }}
+        secondaryAction={{
+          label: unknown ? '查看通用安全支持' : '返回场景页',
+          run: unknown
+            ? () => navigate('/support/safety-report')
+            : () => navigate('/scenes', { replace: true }),
+        }}
       />
     );
   }

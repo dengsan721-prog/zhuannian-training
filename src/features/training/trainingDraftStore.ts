@@ -14,7 +14,8 @@ const recoveryKeys = [
   'userId',
 ] as const;
 const pendingKeys = ['requestId', 'sceneVersionId', 'slug', 'userId'] as const;
-const safetySignals = new Set<SafetySignalCode>([
+const safetyStopRetryKeys = ['ownerUserId', 'sessionId'] as const;
+const safetySignals: readonly SafetySignalCode[] = [
   'physical_or_sexual_violence',
   'serious_threat',
   'coercive_control',
@@ -23,7 +24,7 @@ const safetySignals = new Set<SafetySignalCode>([
   'bullying_or_retaliation',
   'medical_emergency',
   'user_declared_danger',
-]);
+];
 
 export interface TrainingRecoveryEnvelope {
   schemaVersion: 1;
@@ -52,18 +53,36 @@ export type SafetyContext =
       source: 'server';
     };
 
+export interface SafetyStopRetryMarker {
+  ownerUserId: string;
+  sessionId: string;
+}
+
 const drafts = new Map<string, TrainingDraft>();
 const memoryPendingStarts = new Map<string, PendingStartEnvelope>();
 const memorySafetyContexts = new Map<string, SafetyContext>();
+const memorySafetyStopRetryMarkers = new Map<string, SafetyStopRetryMarker>();
 
 const draftKey = (userId: string, sessionId: string) =>
   `turning-mind:draft:${userId}:${sessionId}`;
 const pendingKey = (userId: string, slug: string) =>
   `turning-mind:pending-start:${userId}:${slug}`;
-const safetyKey = (sessionId: string) => `turning-mind:safety:${sessionId}`;
+const safetyKey = (ownerUserId: string, sessionId: string) =>
+  `turning-mind:safety:${ownerUserId}:${sessionId}`;
+const legacySafetyKey = (sessionId: string) => `turning-mind:safety:${sessionId}`;
+const safetyStopRetryKey = (ownerUserId: string, sessionId: string) =>
+  `turning-mind:safety-stop-retry:${ownerUserId}:${sessionId}`;
+const legacySafetyStopRetryKey = (sessionId: string) =>
+  `turning-mind:safety-stop-retry:${sessionId}`;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function hasExactKeys(
@@ -78,6 +97,11 @@ function hasExactKeys(
 
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && uuidPattern.test(value);
+}
+
+function isSafetySignalCode(value: unknown): value is SafetySignalCode {
+  return typeof value === 'string'
+    && safetySignals.some((signal) => signal === value);
 }
 
 function isCanonicalTime(value: unknown): value is string {
@@ -216,6 +240,7 @@ export const trainingDraftStore = {
     for (const key of memoryPendingStarts.keys()) {
       if (key.startsWith(pendingPrefix)) memoryPendingStarts.delete(key);
     }
+    removeAllSafetyStateForUser(userId);
     try {
       for (let index = globalThis.sessionStorage.length - 1; index >= 0; index -= 1) {
         const key = globalThis.sessionStorage.key(index);
@@ -233,6 +258,7 @@ export const trainingDraftStore = {
     drafts.clear();
     memoryPendingStarts.clear();
     memorySafetyContexts.clear();
+    memorySafetyStopRetryMarkers.clear();
   },
 };
 
@@ -318,24 +344,58 @@ export function removePendingStart(
 }
 
 export function saveSafetyContext(
+  ownerUserId: string,
   sessionId: string,
   context: SafetyContext,
 ): void {
-  if (!isUuid(sessionId)
-    || !isUuid(context.sceneVersionId)
-    || (context.source === 'user' && !safetySignals.has(context.signalCode))) {
+  if (!isUuid(ownerUserId) || !isUuid(sessionId) || !isPlainRecord(context)) {
     throw new Error('invalid_safety_context');
   }
-  const key = safetyKey(sessionId);
-  memorySafetyContexts.set(key, context);
-  safeSet(key, context);
+  let cloned: SafetyContext;
+  if (context.source === 'server'
+    && hasExactKeys(context, ['sceneVersionId', 'source'])
+    && isUuid(context.sceneVersionId)) {
+    cloned = {
+      sceneVersionId: context.sceneVersionId,
+      source: 'server',
+    };
+  } else if (context.source === 'user'
+    && hasExactKeys(context, ['sceneVersionId', 'signalCode', 'source'])
+    && isUuid(context.sceneVersionId)
+    && isSafetySignalCode(context.signalCode)) {
+    cloned = {
+      sceneVersionId: context.sceneVersionId,
+      source: 'user',
+      signalCode: context.signalCode,
+    };
+  } else {
+    throw new Error('invalid_safety_context');
+  }
+  const key = safetyKey(ownerUserId, sessionId);
+  memorySafetyContexts.set(key, { ...cloned });
+  safeSet(key, cloned.source === 'user' ? {
+    ownerUserId,
+    sessionId,
+    sceneVersionId: cloned.sceneVersionId,
+    source: 'user',
+    signalCode: cloned.signalCode,
+  } : {
+    ownerUserId,
+    sessionId,
+    sceneVersionId: cloned.sceneVersionId,
+    source: 'server',
+  });
 }
 
-export function loadSafetyContext(sessionId: string): SafetyContext | null {
-  if (!isUuid(sessionId)) return null;
-  const key = safetyKey(sessionId);
+export function loadSafetyContext(
+  ownerUserId: string,
+  sessionId: string,
+): SafetyContext | null {
+  if (!isUuid(ownerUserId) || !isUuid(sessionId)) return null;
+  safeRemove(legacySafetyKey(sessionId));
+  const key = safetyKey(ownerUserId, sessionId);
   const memory = memorySafetyContexts.get(key);
-  if (memory) return memory;
+  if (memory) return { ...memory };
   const raw = safeGet(key);
   if (!raw) return null;
   let value: unknown;
@@ -345,37 +405,214 @@ export function loadSafetyContext(sessionId: string): SafetyContext | null {
     safeRemove(key);
     return null;
   }
-  if (!isRecord(value) || !isUuid(value.sceneVersionId)) {
+  if (!isPlainRecord(value)
+    || value.ownerUserId !== ownerUserId
+    || value.sessionId !== sessionId
+    || !isUuid(value.sceneVersionId)) {
     safeRemove(key);
     return null;
   }
   if (value.source === 'server'
-    && hasExactKeys(value, ['sceneVersionId', 'source'])) {
+    && hasExactKeys(value, [
+      'ownerUserId',
+      'sceneVersionId',
+      'sessionId',
+      'source',
+    ])) {
     const context: SafetyContext = {
       sceneVersionId: value.sceneVersionId,
       source: 'server',
     };
-    memorySafetyContexts.set(key, context);
-    return context;
+    memorySafetyContexts.set(key, { ...context });
+    return { ...context };
   }
   if (value.source === 'user'
-    && hasExactKeys(value, ['sceneVersionId', 'signalCode', 'source'])
-    && typeof value.signalCode === 'string'
-    && safetySignals.has(value.signalCode as SafetySignalCode)) {
+    && hasExactKeys(value, [
+      'ownerUserId',
+      'sceneVersionId',
+      'sessionId',
+      'signalCode',
+      'source',
+    ])
+    && isSafetySignalCode(value.signalCode)) {
     const context: SafetyContext = {
       sceneVersionId: value.sceneVersionId,
       source: 'user',
-      signalCode: value.signalCode as SafetySignalCode,
+      signalCode: value.signalCode,
     };
-    memorySafetyContexts.set(key, context);
-    return context;
+    memorySafetyContexts.set(key, { ...context });
+    return { ...context };
   }
   safeRemove(key);
   return null;
 }
 
-export function removeSafetyContext(sessionId: string): void {
-  const key = safetyKey(sessionId);
+export function removeSafetyContext(
+  ownerUserId: string,
+  sessionId: string,
+): void {
+  const key = safetyKey(ownerUserId, sessionId);
   memorySafetyContexts.delete(key);
   safeRemove(key);
+  safeRemove(legacySafetyKey(sessionId));
+}
+
+export function removeAllSafetyContextsForUser(ownerUserId: string): void {
+  if (!isUuid(ownerUserId)) return;
+  const prefix = `turning-mind:safety:${ownerUserId}:`;
+  for (const key of memorySafetyContexts.keys()) {
+    if (key.startsWith(prefix)) memorySafetyContexts.delete(key);
+  }
+  try {
+    for (let index = globalThis.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = globalThis.sessionStorage.key(index);
+      if (!key?.startsWith('turning-mind:safety:')) continue;
+      const suffix = key.slice('turning-mind:safety:'.length);
+      if (key.startsWith(prefix) || !suffix.includes(':')) {
+        globalThis.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Storage denial is treated as no recoverable safety context.
+  }
+}
+
+export function saveSafetyStopRetryMarker(
+  ownerUserId: string,
+  sessionId: string,
+): void {
+  if (!isUuid(ownerUserId) || !isUuid(sessionId)) {
+    throw new Error('invalid_safety_stop_retry_marker');
+  }
+  const marker: SafetyStopRetryMarker = {
+    ownerUserId,
+    sessionId,
+  };
+  const key = safetyStopRetryKey(ownerUserId, sessionId);
+  memorySafetyStopRetryMarkers.set(key, { ...marker });
+  safeSet(key, marker);
+}
+
+export function loadSafetyStopRetryMarker(
+  ownerUserId: string,
+  sessionId: string,
+): SafetyStopRetryMarker | null {
+  if (!isUuid(ownerUserId) || !isUuid(sessionId)) return null;
+  safeRemove(legacySafetyStopRetryKey(sessionId));
+  const key = safetyStopRetryKey(ownerUserId, sessionId);
+  const memory = memorySafetyStopRetryMarkers.get(key);
+  if (memory) return { ...memory };
+
+  const raw = safeGet(key);
+  if (!raw) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    safeRemove(key);
+    return null;
+  }
+  if (!isPlainRecord(value)
+    || !hasExactKeys(value, safetyStopRetryKeys)
+    || value.ownerUserId !== ownerUserId
+    || value.sessionId !== sessionId
+    || !isUuid(value.ownerUserId)
+    || !isUuid(value.sessionId)) {
+    safeRemove(key);
+    return null;
+  }
+  const marker: SafetyStopRetryMarker = {
+    ownerUserId: value.ownerUserId,
+    sessionId: value.sessionId,
+  };
+  memorySafetyStopRetryMarkers.set(key, { ...marker });
+  return { ...marker };
+}
+
+export function removeSafetyStopRetryMarker(
+  ownerUserId: string,
+  sessionId: string,
+): void {
+  const key = safetyStopRetryKey(ownerUserId, sessionId);
+  memorySafetyStopRetryMarkers.delete(key);
+  safeRemove(key);
+  safeRemove(legacySafetyStopRetryKey(sessionId));
+}
+
+function removeAllSafetyStopRetryMarkersForUser(ownerUserId: string): void {
+  if (!isUuid(ownerUserId)) return;
+  const prefix = `turning-mind:safety-stop-retry:${ownerUserId}:`;
+  for (const key of memorySafetyStopRetryMarkers.keys()) {
+    if (key.startsWith(prefix)) memorySafetyStopRetryMarkers.delete(key);
+  }
+  try {
+    for (let index = globalThis.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = globalThis.sessionStorage.key(index);
+      if (!key?.startsWith('turning-mind:safety-stop-retry:')) continue;
+      const suffix = key.slice('turning-mind:safety-stop-retry:'.length);
+      if (key.startsWith(prefix) || !suffix.includes(':')) {
+        globalThis.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Storage denial is treated as no recoverable safety-stop retry.
+  }
+}
+
+export function removeAllSafetyStateForUser(ownerUserId: string): void {
+  removeAllSafetyContextsForUser(ownerUserId);
+  removeAllSafetyStopRetryMarkersForUser(ownerUserId);
+}
+
+export function removeAllSafetyState(): void {
+  memorySafetyContexts.clear();
+  memorySafetyStopRetryMarkers.clear();
+  try {
+    for (
+      let index = globalThis.sessionStorage.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const key = globalThis.sessionStorage.key(index);
+      if (key?.startsWith('turning-mind:safety:')
+        || key?.startsWith('turning-mind:safety-stop-retry:')) {
+        globalThis.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Storage denial is treated as no recoverable safety state.
+  }
+}
+
+export function removeSafetyStateForOtherUsers(
+  currentOwnerUserId: string,
+): void {
+  if (!isUuid(currentOwnerUserId)) return;
+  const contextPrefix = `turning-mind:safety:${currentOwnerUserId}:`;
+  const retryPrefix =
+    `turning-mind:safety-stop-retry:${currentOwnerUserId}:`;
+
+  for (const key of memorySafetyContexts.keys()) {
+    if (!key.startsWith(contextPrefix)) memorySafetyContexts.delete(key);
+  }
+  for (const key of memorySafetyStopRetryMarkers.keys()) {
+    if (!key.startsWith(retryPrefix)) {
+      memorySafetyStopRetryMarkers.delete(key);
+    }
+  }
+
+  try {
+    for (let index = globalThis.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = globalThis.sessionStorage.key(index);
+      if (key?.startsWith('turning-mind:safety:')
+        && !key.startsWith(contextPrefix)) {
+        globalThis.sessionStorage.removeItem(key);
+      } else if (key?.startsWith('turning-mind:safety-stop-retry:')
+        && !key.startsWith(retryPrefix)) {
+        globalThis.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Storage denial is treated as no cross-user recoverable safety state.
+  }
 }

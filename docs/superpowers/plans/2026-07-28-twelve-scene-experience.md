@@ -70,6 +70,8 @@ export interface ExperienceScene {
   newThought: string;
   newExpression: string;
   microAction: string;
+  nextSceneCue: string;
+  passCriteria: readonly [string, string, string];
 }
 ```
 
@@ -102,6 +104,10 @@ describe('happinessScenes', () => {
       expect(scene.newThought.length).toBeGreaterThanOrEqual(16);
       expect(scene.newExpression.length).toBeGreaterThanOrEqual(12);
       expect(scene.microAction.length).toBeGreaterThanOrEqual(8);
+      expect(scene.nextSceneCue.length).toBeGreaterThanOrEqual(8);
+      expect(scene.passCriteria).toHaveLength(3);
+      expect(scene.passCriteria.every((criterion) => criterion.length >= 8))
+        .toBe(true);
     }
   });
 });
@@ -151,6 +157,9 @@ For every object:
 - `newThought` is one vivid but non-absolute reframe;
 - `newExpression` is immediately speakable;
 - `microAction` starts within ten minutes.
+- `nextSceneCue` names the next real-life trigger instead of a vague future time;
+- `passCriteria` contains exactly three observable checks and never uses
+  “理解了”“想通了” or another internal state as proof.
 
 Use this fully authored key-10 object as the implementation standard:
 
@@ -185,6 +194,12 @@ Use this fully authored key-10 object as the implementation standard:
   newThought: '一次分数只能暴露这次学习中的问题，不能替孩子的一生下结论；这张卷子没替他说好话，但他没有躲开它。',
   newExpression: '这次分数不理想，但我看见你在主动订正。我们先把最容易补上的那一题弄懂。',
   microAction: '先只问一道题：“你最想先弄懂哪一道？”然后听完再给建议。',
+  nextSceneCue: '下一次孩子带回一张分数不理想的试卷时。',
+  passCriteria: [
+    '先说出一个试卷上真实可见的成长动作。',
+    '只问一道孩子愿意先处理的错题。',
+    '听完回答前，不比较、不追加第二个要求。',
+  ],
 }
 ```
 
@@ -243,6 +258,10 @@ it('completes one reframe in four screens and lights one private key', async () 
   await user.click(screen.getByRole('button', { name: '先看见隐藏的力量' }));
   expect(screen.getByRole('heading', { name: '转念一刻' })).toBeInTheDocument();
   expect(screen.getByText(/这张卷子没替他说好话/)).toBeInTheDocument();
+  expect(screen.getByText('下一次孩子带回一张分数不理想的试卷时。'))
+    .toBeInTheDocument();
+  expect(screen.getByText(/我们先把最容易补上的那一题弄懂/))
+    .toBeInTheDocument();
   expect(screen.getByText('已点亮 1 / 12 个幸福密码')).toBeInTheDocument();
 });
 ```
@@ -282,6 +301,13 @@ Implementation rules:
 - result prominently shows `newThought`, `newExpression`, and `microAction`;
 - result also names the selected first thought and its authored `likelyDirection`, so the user can see the old path without being shamed;
 - a native `<details>` titled `为什么这样转？` contains `strengthView`, `evidencePrompt`, and `boundary`;
+- a compact `今晚行动约定` always contains three labeled lines:
+  - `下一次场景` → `nextSceneCue`
+  - `要说的一句话` → `newExpression`
+  - `只做一个动作` → `microAction`
+- a native `<details>` titled `我怎样知道自己练到了？` contains all three `passCriteria`;
+- a native `<details>` titled `今晚只观察三件事` contains the read-only prompts
+  `我做了什么`、`对方如何回应`、`和以前有什么不同`; it contains no text box and does not block completion;
 - when the completed-key count first reaches `3`, `6`, or `12`, show one private observation card:
   - 3: `你已经开始看见第一念之外的可能`
   - 6: `你正在把转念变成一种稳定能力`
@@ -461,9 +487,11 @@ Start the existing Vite preview, open `/join` at a `390 × 844` viewport, click 
 1. all 12 scenes are reachable;
 2. the key-10 path completes in three selections;
 3. the result shows new thought, speakable sentence, micro-action, and boundary details;
-4. the danger link remains visible;
-5. there is no horizontal scroll;
-6. reloading does not preserve private experience selections.
+4. the result action agreement contains one next scene, one sentence, and one action;
+5. the three pass criteria are observable behaviors;
+6. the danger link remains visible;
+7. there is no horizontal scroll;
+8. reloading does not preserve private experience selections.
 
 - [ ] **Step 6: Review the final diff before any commit**
 

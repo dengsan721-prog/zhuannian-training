@@ -6,7 +6,10 @@ import {
   useState,
 } from 'react';
 import { Route, Routes, useParams } from 'react-router-dom';
+import { DEMO_MODE_KEY, demoEnvironment } from '../demo/demoEnvironment';
+import { ReframeExperiencePage } from '../features/experience/ReframeExperiencePage';
 import { AdultGatePage } from '../features/onboarding/AdultGatePage';
+import { CommentingPage } from '../features/commenting/CommentingPage';
 import { JoinCohortPage } from '../features/onboarding/JoinCohortPage';
 import { PhoneVerifyPage } from '../features/onboarding/PhoneVerifyPage';
 import {
@@ -418,14 +421,26 @@ export function AppRouter({
   trainingNow,
   trainingOnline,
 }: AppRouterProps = {}) {
+  const demoMode = window.sessionStorage.getItem(DEMO_MODE_KEY) === '1';
+  const activeSceneRepository = sceneRepository
+    ?? (demoMode ? demoEnvironment.sceneRepository : undefined);
+  const activeRuntimeRepository = runtimeRepository
+    ?? (demoMode ? demoEnvironment.runtimeRepository : undefined);
+  const activeProgressRepository = progressRepository
+    ?? (demoMode ? demoEnvironment.progressRepository : undefined);
+  const activeSupportRepository = supportRepository
+    ?? (demoMode ? demoEnvironment.supportRepository : undefined);
+  const activeCurrentUserId = getCurrentUserId
+    ?? (demoMode ? demoEnvironment.getCurrentUserId : undefined);
+  const activeOnline = trainingOnline ?? (demoMode ? true : undefined);
   const trainingDependencies = {
-    sceneRepository,
-    runtimeRepository,
-    progressRepository,
-    supportRepository,
-    getCurrentUserId,
+    sceneRepository: activeSceneRepository,
+    runtimeRepository: activeRuntimeRepository,
+    progressRepository: activeProgressRepository,
+    supportRepository: activeSupportRepository,
+    getCurrentUserId: activeCurrentUserId,
     now: trainingNow,
-    online: trainingOnline,
+    online: activeOnline,
   };
   return (
     <Routes>
@@ -435,35 +450,38 @@ export function AppRouter({
       <Route path="/privacy" element={<PrivacyNoticePage />} />
       <Route path="/service-boundary" element={<ServiceBoundaryPage />} />
       <Route path="/content-correction" element={<ContentCorrectionPage />} />
+      <Route path="/commenting" element={<CommentingPage />} />
       <Route
         path="/scenes"
-        element={(
-          <SceneHomeRoute
-            sceneRepository={sceneRepository}
-            progressRepository={progressRepository}
-          />
-        )}
+        element={demoMode
+          ? <ReframeExperiencePage />
+          : (
+            <SceneHomeRoute
+              sceneRepository={activeSceneRepository}
+              progressRepository={activeProgressRepository}
+            />
+          )}
       />
       <Route
         path="/reviews/:completionId"
-        element={<FollowUpRoute progressRepository={progressRepository} />}
+        element={<FollowUpRoute progressRepository={activeProgressRepository} />}
       />
       <Route
         path="/progress"
-        element={<PrivateProgressRoute progressRepository={progressRepository} />}
+        element={<PrivateProgressRoute progressRepository={activeProgressRepository} />}
       />
       <Route
         path="/favorites"
-        element={<PrivateProgressRoute progressRepository={progressRepository} />}
+        element={<PrivateProgressRoute progressRepository={activeProgressRepository} />}
       />
       <Route path="/support" element={<SupportHubPage />} />
       <Route
         path="/support/request"
         element={(
           <SupportRequestRoute
-            supportRepository={supportRepository}
-            getCurrentUserId={getCurrentUserId}
-            trainingOnline={trainingOnline}
+            supportRepository={activeSupportRepository}
+            getCurrentUserId={activeCurrentUserId}
+            trainingOnline={activeOnline}
           />
         )}
       />
@@ -471,9 +489,9 @@ export function AppRouter({
         path="/support/status"
         element={(
           <SupportStatusRoute
-            supportRepository={supportRepository}
-            getCurrentUserId={getCurrentUserId}
-            trainingOnline={trainingOnline}
+            supportRepository={activeSupportRepository}
+            getCurrentUserId={activeCurrentUserId}
+            trainingOnline={activeOnline}
           />
         )}
       />
@@ -481,9 +499,9 @@ export function AppRouter({
         path="/support/safety-report"
         element={(
           <SafetyReportRoute
-            supportRepository={supportRepository}
-            getCurrentUserId={getCurrentUserId}
-            trainingOnline={trainingOnline}
+            supportRepository={activeSupportRepository}
+            getCurrentUserId={activeCurrentUserId}
+            trainingOnline={activeOnline}
           />
         )}
       />
@@ -491,9 +509,9 @@ export function AppRouter({
         path="/support/safety-report/:sessionId"
         element={(
           <SafetyReportRoute
-            supportRepository={supportRepository}
-            getCurrentUserId={getCurrentUserId}
-            trainingOnline={trainingOnline}
+            supportRepository={activeSupportRepository}
+            getCurrentUserId={activeCurrentUserId}
+            trainingOnline={activeOnline}
           />
         )}
       />

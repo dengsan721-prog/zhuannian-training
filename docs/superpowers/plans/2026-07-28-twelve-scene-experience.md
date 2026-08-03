@@ -16,6 +16,7 @@
 - Publish exactly 12 scenes and map primary key IDs exactly once across `1` through `12`.
 - Each scene exposes exactly three realistic first-thought choices and one primary Happiness Key.
 - Every positive interpretation uses conditional language and stays tied to an observable fact.
+- Every result includes one `commentExpression` as the reframe-after-speech outlet; it is not a separate commenting workflow.
 - Every result includes a boundary; understanding never cancels safety, respect, or a reasonable rule.
 - The danger exit remains visible on training screens and routes to `/support`.
 - Experience progress is private, session-local component state only; there is no personal ranking or streak penalty.
@@ -69,6 +70,7 @@ export interface ExperienceScene {
   boundary: string;
   newThought: string;
   newExpression: string;
+  commentExpression: string;
   microAction: string;
   nextSceneCue: string;
   passCriteria: readonly [string, string, string];
@@ -103,6 +105,7 @@ describe('happinessScenes', () => {
       expect(scene.boundary.length).toBeGreaterThanOrEqual(10);
       expect(scene.newThought.length).toBeGreaterThanOrEqual(16);
       expect(scene.newExpression.length).toBeGreaterThanOrEqual(12);
+      expect(scene.commentExpression.length).toBeGreaterThanOrEqual(14);
       expect(scene.microAction.length).toBeGreaterThanOrEqual(8);
       expect(scene.nextSceneCue.length).toBeGreaterThanOrEqual(8);
       expect(scene.passCriteria).toHaveLength(3);
@@ -156,6 +159,7 @@ For every object:
 - `boundary` states what still cannot be ignored;
 - `newThought` is one vivid but non-absolute reframe;
 - `newExpression` is immediately speakable;
+- `commentExpression` is a reframe-backed comment that names one concrete behavior and the strength, quality, or character it may show;
 - `microAction` starts within ten minutes.
 - `nextSceneCue` names the next real-life trigger instead of a vague future time;
 - `passCriteria` contains exactly three observable checks and never uses
@@ -193,6 +197,7 @@ Use this fully authored key-10 object as the implementation standard:
   boundary: '看见订正的力量，不等于忽略学习习惯和仍需解决的知识漏洞。',
   newThought: '一次分数只能暴露这次学习中的问题，不能替孩子的一生下结论；这张卷子没替他说好话，但他没有躲开它。',
   newExpression: '这次分数不理想，但我看见你在主动订正。我们先把最容易补上的那一题弄懂。',
+  commentExpression: '你拿到试卷后愿意标错题、改错题，这说明你有面对问题的勇气和补上的心。',
   microAction: '先只问一道题：“你最想先弄懂哪一道？”然后听完再给建议。',
   nextSceneCue: '下一次孩子带回一张分数不理想的试卷时。',
   passCriteria: [
@@ -298,12 +303,13 @@ Implementation rules:
   - `先看见隐藏的力量`
   - `先守住事实和边界`
 - either angle selection sets `screen = 'result'` and adds the primary key ID to the local `Set`;
-- result prominently shows `newThought`, `newExpression`, and `microAction`;
+- result prominently shows `newThought`, `newExpression`, `commentExpression`, and `microAction`;
 - result also names the selected first thought and its authored `likelyDirection`, so the user can see the old path without being shamed;
 - a native `<details>` titled `为什么这样转？` contains `strengthView`, `evidencePrompt`, and `boundary`;
-- a compact `今晚行动约定` always contains three labeled lines:
+- a compact `今晚行动约定` always contains four labeled lines:
   - `下一次场景` → `nextSceneCue`
   - `要说的一句话` → `newExpression`
+  - `转念后的点评` → `commentExpression`
   - `只做一个动作` → `microAction`
 - a native `<details>` titled `我怎样知道自己练到了？` contains all three `passCriteria`;
 - a native `<details>` titled `今晚只观察三件事` contains the read-only prompts

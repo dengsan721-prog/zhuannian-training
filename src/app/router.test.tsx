@@ -162,6 +162,24 @@ describe('onboarding information routes', () => {
   });
 });
 
+describe('no-class-code demo', () => {
+  afterEach(() => {
+    cleanup();
+    sessionStorage.clear();
+  });
+
+  it('loads the twelve-scene experience without opening the formal catalog', () => {
+    sessionStorage.setItem('zhuannian:demo-mode', '1');
+    renderRoute('/scenes');
+
+    expect(screen.getByRole('heading', { name: '今天，先转一个念头' }))
+      .toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^选择场景：/ })).toHaveLength(12);
+    expect(screen.queryByRole('heading', { name: '说好十分钟，却一拖再拖' }))
+      .not.toBeInTheDocument();
+  });
+});
+
 describe('private progress routes', () => {
   afterEach(cleanup);
 
@@ -182,6 +200,21 @@ describe('private progress routes', () => {
     expect(screen.getByRole('heading', { name: '后来发生了什么？' }))
       .toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+});
+
+describe('commenting route', () => {
+  afterEach(cleanup);
+
+  it('renders the independent commenting tool at /commenting', () => {
+    renderRoute('/commenting');
+
+    expect(screen.getByRole('heading', { name: '点评工具' }))
+      .toBeInTheDocument();
+    expect(screen.getByText('学会说话，矛盾自化')).toBeInTheDocument();
+    expect(screen.getByLabelText('写下你看见的一幕'))
+      .toBeInTheDocument();
+    expect(screen.getByLabelText('输入质询')).toHaveTextContent('先写一个看得见的细节');
   });
 });
 

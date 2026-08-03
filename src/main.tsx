@@ -5,9 +5,13 @@ import { AppRouter } from './app/router';
 import './styles/tokens.css';
 import './styles/global.css';
 
+const routerBaseName = import.meta.env.BASE_URL === '/'
+  ? undefined
+  : import.meta.env.BASE_URL;
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={routerBaseName}>
       <AppRouter />
     </BrowserRouter>
   </StrictMode>,

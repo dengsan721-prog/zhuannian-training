@@ -45,6 +45,21 @@ describe('JoinCohortPage', () => {
     expect(screen.getByRole('link', { name: '服务边界' })).toHaveAttribute('href', '/service-boundary');
   });
 
+  it('offers a no-class-code demo without submitting personal data', async () => {
+    const requestSms = vi.fn();
+    render(<JoinCohortPage requestSms={requestSms} />);
+
+    const demoLink = screen.getByRole('link', {
+      name: '无需班级码，直接体验',
+    });
+    demoLink.addEventListener('click', (event) => event.preventDefault());
+    await userEvent.click(demoLink);
+
+    expect(demoLink).toHaveAttribute('href', '/scenes');
+    expect(window.sessionStorage.getItem('zhuannian:demo-mode')).toBe('1');
+    expect(requestSms).not.toHaveBeenCalled();
+  });
+
   it('does not turn consent on when a user opens an information link', async () => {
     render(<JoinCohortPage requestSms={vi.fn()} />);
     const privacyConsent = screen.getByLabelText('我已阅读并同意隐私说明');

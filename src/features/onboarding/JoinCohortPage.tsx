@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { DEMO_MODE_KEY } from '../../demo/demoEnvironment';
 import { requestInviteOtp } from './authService';
 import { normalizeChineseMobile } from './phone';
 import type { RequestInviteOtpInput, RequestInviteOtpResult } from './types';
@@ -36,6 +37,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
     setPending(true);
     setRequested(false);
     setError(null);
+    window.sessionStorage.removeItem(DEMO_MODE_KEY);
     window.sessionStorage.removeItem(SESSION_KEY);
     try {
       const result = await requestSms({
@@ -124,6 +126,17 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
             验证码请求已受理。<a href="/verify">输入验证码</a>
           </p>
         )}
+
+        <div className="service-disclosure">
+          <p>还没有班级码？可以先体验一个完整场景，不需要手机号，也不会提交或保存记录。</p>
+          <a
+            className="secondary-action"
+            href="/scenes"
+            onClick={() => window.sessionStorage.setItem(DEMO_MODE_KEY, '1')}
+          >
+            无需班级码，直接体验
+          </a>
+        </div>
 
         <div className="service-disclosure">
           <p>Supabase 负责身份验证和数据库。</p>

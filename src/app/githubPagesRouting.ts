@@ -19,7 +19,7 @@ export function directPathToHashUrl({
   if (!pathname.startsWith(normalizedBase)) return null;
 
   const routePath = pathname.slice(normalizedBase.length - 1);
-  return `${normalizedBase}#${routePath}${search}`;
+  return `${normalizedBase}${search}#${routePath}`;
 }
 
 export function redirectDirectPathToHashRoute(location = window.location): void {

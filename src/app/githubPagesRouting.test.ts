@@ -17,7 +17,7 @@ describe('directPathToHashUrl', () => {
       search: '?from=share',
       hash: '',
       basePath: '/zhuannian-training/',
-    })).toBe('/zhuannian-training/#/scenes?from=share');
+    })).toBe('/zhuannian-training/?from=share#/scenes');
   });
 
   it('does not rewrite the app root or existing hash routes', () => {

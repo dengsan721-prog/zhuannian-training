@@ -28,7 +28,17 @@ jobs:
 
       - run: npm install
       - run: npm run build:pages
-      - run: cp dist/index.html dist/404.html
+      - name: Create direct links for GitHub Pages
+        run: |
+          cp dist/index.html dist/404.html
+          for route in join scenes commenting privacy service-boundary content-correction verify support progress favorites; do
+            mkdir -p "dist/$route"
+            cp dist/index.html "dist/$route/index.html"
+          done
+          mkdir -p dist/support/request dist/support/status dist/support/safety-report
+          cp dist/index.html dist/support/request/index.html
+          cp dist/index.html dist/support/status/index.html
+          cp dist/index.html dist/support/safety-report/index.html
 
       - uses: actions/configure-pages@v5
         with:

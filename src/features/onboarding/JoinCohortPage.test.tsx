@@ -41,8 +41,8 @@ describe('JoinCohortPage', () => {
     expect(screen.getByText(/尚未配置生产短信供应商或第三方监控服务/)).toBeInTheDocument();
     expect(screen.getByText('本服务不是急救或危机热线')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '内容纠错' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '隐私说明' })).toHaveAttribute('href', '/privacy');
-    expect(screen.getByRole('link', { name: '服务边界' })).toHaveAttribute('href', '/service-boundary');
+    expect(screen.getByRole('link', { name: '隐私说明' })).toHaveAttribute('href', '#/privacy');
+    expect(screen.getByRole('link', { name: '服务边界' })).toHaveAttribute('href', '#/service-boundary');
   });
 
   it('offers a no-class-code demo without submitting personal data', async () => {
@@ -55,9 +55,17 @@ describe('JoinCohortPage', () => {
     demoLink.addEventListener('click', (event) => event.preventDefault());
     await userEvent.click(demoLink);
 
-    expect(demoLink).toHaveAttribute('href', '/scenes');
+    expect(demoLink).toHaveAttribute('href', '#/scenes');
     expect(window.sessionStorage.getItem('zhuannian:demo-mode')).toBe('1');
     expect(requestSms).not.toHaveBeenCalled();
+  });
+
+  it('keeps the no-class-code demo link inside the GitHub Pages app', () => {
+    render(<JoinCohortPage requestSms={vi.fn()} />);
+
+    expect(screen.getByRole('link', {
+      name: '无需班级码，直接体验',
+    })).toHaveAttribute('href', '#/scenes');
   });
 
   it('does not turn consent on when a user opens an information link', async () => {
@@ -97,7 +105,7 @@ describe('JoinCohortPage', () => {
     await userEvent.click(screen.getByLabelText('我已阅读服务边界'));
     await userEvent.click(screen.getByRole('button', { name: '发送验证码' }));
 
-    await waitFor(() => expect(screen.getByRole('link', { name: '输入验证码' })).toHaveAttribute('href', '/verify'));
+    await waitFor(() => expect(screen.getByRole('link', { name: '输入验证码' })).toHaveAttribute('href', '#/verify'));
     expect(JSON.parse(window.sessionStorage.getItem('zhuannian:onboarding') ?? '{}')).toEqual({
       phone: '+8613800138000',
       requestId: 'request-1',

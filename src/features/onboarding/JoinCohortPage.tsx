@@ -104,7 +104,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
               checked={privacyAccepted}
               onChange={(event) => setPrivacyAccepted(event.target.checked)}
             />
-            <span>我已阅读并同意<a href="/privacy">隐私说明</a></span>
+            <span>我已阅读并同意<a href="#/privacy">隐私说明</a></span>
           </div>
           <div className="consent-row">
             <input
@@ -113,7 +113,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
               checked={boundaryAccepted}
               onChange={(event) => setBoundaryAccepted(event.target.checked)}
             />
-            <span>我已阅读<a href="/service-boundary">服务边界</a></span>
+            <span>我已阅读<a href="#/service-boundary">服务边界</a></span>
           </div>
           <button className="primary-action" type="submit" disabled={!canSubmit}>
             {pending ? '正在发送…' : '发送验证码'}
@@ -123,7 +123,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
         {error && <p role="alert" className="error-note">{error}</p>}
         {requested && (
           <p role="status">
-            验证码请求已受理。<a href="/verify">输入验证码</a>
+            验证码请求已受理。<a href="#/verify">输入验证码</a>
           </p>
         )}
 
@@ -131,7 +131,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
           <p>还没有班级码？可以先体验一个完整场景，不需要手机号，也不会提交或保存记录。</p>
           <a
             className="secondary-action"
-            href="/scenes"
+            href="#/scenes"
             onClick={() => window.sessionStorage.setItem(DEMO_MODE_KEY, '1')}
           >
             无需班级码，直接体验
@@ -142,7 +142,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
           <p>Supabase 负责身份验证和数据库。</p>
           <p>当前尚未配置生产短信供应商或第三方监控服务；真实短信仍是部署前置条件。</p>
           <p className="boundary-note">本服务不是急救或危机热线</p>
-          <p><a href="/content-correction">内容纠错</a></p>
+          <p><a href="#/content-correction">内容纠错</a></p>
         </div>
       </section>
     </main>

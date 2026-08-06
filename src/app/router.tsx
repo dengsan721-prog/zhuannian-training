@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Route, Routes, useParams } from 'react-router-dom';
+import { Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { DEMO_MODE_KEY, demoEnvironment } from '../demo/demoEnvironment';
 import { ReframeExperiencePage } from '../features/experience/ReframeExperiencePage';
 import { AdultGatePage } from '../features/onboarding/AdultGatePage';
@@ -421,7 +421,9 @@ export function AppRouter({
   trainingNow,
   trainingOnline,
 }: AppRouterProps = {}) {
-  const demoMode = window.sessionStorage.getItem(DEMO_MODE_KEY) === '1';
+  const location = useLocation();
+  const demoMode = window.sessionStorage.getItem(DEMO_MODE_KEY) === '1'
+    || new URLSearchParams(location.search).get('demo') === '1';
   const activeSceneRepository = sceneRepository
     ?? (demoMode ? demoEnvironment.sceneRepository : undefined);
   const activeRuntimeRepository = runtimeRepository

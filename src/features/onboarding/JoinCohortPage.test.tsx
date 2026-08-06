@@ -55,7 +55,7 @@ describe('JoinCohortPage', () => {
     demoLink.addEventListener('click', (event) => event.preventDefault());
     await userEvent.click(demoLink);
 
-    expect(demoLink).toHaveAttribute('href', '#/scenes');
+    expect(demoLink).toHaveAttribute('href', '#/scenes?demo=1');
     expect(window.sessionStorage.getItem('zhuannian:demo-mode')).toBe('1');
     expect(requestSms).not.toHaveBeenCalled();
   });
@@ -65,7 +65,7 @@ describe('JoinCohortPage', () => {
 
     expect(screen.getByRole('link', {
       name: '无需班级码，直接体验',
-    })).toHaveAttribute('href', '#/scenes');
+    })).toHaveAttribute('href', '#/scenes?demo=1');
   });
 
   it('does not turn consent on when a user opens an information link', async () => {

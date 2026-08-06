@@ -178,6 +178,14 @@ describe('no-class-code demo', () => {
     expect(screen.queryByRole('heading', { name: '说好十分钟，却一拖再拖' }))
       .not.toBeInTheDocument();
   });
+
+  it('loads the twelve-scene experience from a demo query link', () => {
+    renderRoute('/scenes?demo=1');
+
+    expect(screen.getByRole('heading', { name: '今天，先转一个念头' }))
+      .toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^选择场景：/ })).toHaveLength(12);
+  });
 });
 
 describe('private progress routes', () => {

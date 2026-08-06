@@ -131,7 +131,7 @@ export function JoinCohortPage({ requestSms = requestInviteOtp }: JoinCohortPage
           <p>还没有班级码？可以先体验一个完整场景，不需要手机号，也不会提交或保存记录。</p>
           <a
             className="secondary-action"
-            href="#/scenes"
+            href="#/scenes?demo=1"
             onClick={() => window.sessionStorage.setItem(DEMO_MODE_KEY, '1')}
           >
             无需班级码，直接体验

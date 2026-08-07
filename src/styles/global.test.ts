@@ -12,6 +12,16 @@ describe('commenting mobile styles', () => {
     expect(css).toContain('--radius-pill: 999px');
   });
 
+  it('applies the Apple-style shell, surface, and action treatments', () => {
+    const css = readFileSync(resolve('src/styles/global.css'), 'utf8');
+
+    expect(css).toContain('body::before');
+    expect(css).toMatch(/\.surface \{[^}]*var\(--color-surface-glass\)/s);
+    expect(css).toMatch(/\.surface \{[^}]*backdrop-filter: blur\(22px\)/s);
+    expect(css).toMatch(/\.primary-action \{[^}]*var\(--radius-pill\)/s);
+    expect(css).toMatch(/\.primary-action \{[^}]*var\(--shadow-lift\)/s);
+  });
+
   it('keeps the phone input compact enough for first-screen use', () => {
     const css = readFileSync(resolve('src/styles/global.css'), 'utf8');
 
